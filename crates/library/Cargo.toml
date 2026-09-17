@@ -1,0 +1,15 @@
+[package]
+name = "qingyin-library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+notify.workspace = true
+qingyin-chinese = { path = "../chinese" }
+qingyin-metadata = { path = "../metadata" }
+qingyin-storage = { path = "../storage" }
+tracing.workspace = true
+
+[lints]
+workspace = true

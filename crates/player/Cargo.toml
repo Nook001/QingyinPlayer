@@ -1,0 +1,14 @@
+[package]
+name = "qingyin-player"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gstreamer.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zbus.workspace = true
+
+[lints]
+workspace = true

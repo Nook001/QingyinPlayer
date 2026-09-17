@@ -1,0 +1,15 @@
+[package]
+name = "qingyin-ui-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cstr.workspace = true
+qmetaobject.workspace = true
+qingyin-core = { path = "../core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

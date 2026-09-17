@@ -1,0 +1,12 @@
+[package]
+name = "qingyin-metadata"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lofty.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

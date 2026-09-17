@@ -1,0 +1,15 @@
+[package]
+name = "qingyin-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+qingyin-library = { path = "../library" }
+qingyin-metadata = { path = "../metadata" }
+qingyin-player = { path = "../player" }
+serde.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

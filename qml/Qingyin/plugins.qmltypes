@@ -1,0 +1,20 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        name: "AppBridge"
+        prototype: "QObject"
+        exports: ["Qingyin/AppBridge 1.0"]
+        exportMetaObjectRevisions: [256]
+
+        Method {
+            name: "application_name"
+            type: "QString"
+        }
+
+        Method {
+            name: "version"
+            type: "QString"
+        }
+    }
+}
