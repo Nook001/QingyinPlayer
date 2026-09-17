@@ -278,7 +278,7 @@ ApplicationWindow {
 
             PlayerBar {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 88
+                Layout.preferredHeight: 104
                 theme: window
                 cornerRadius: window.cornerRadius
                 playerBackend: backend

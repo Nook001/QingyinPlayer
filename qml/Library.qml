@@ -75,6 +75,43 @@ Item {
             color: root.theme.dividerColor
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            spacing: 14
+            visible: trackList.count > 0
+
+            Text {
+                Layout.preferredWidth: 44
+                text: "封面"
+                color: root.theme.mutedTextColor
+                font.pixelSize: 12
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "歌曲名"
+                color: root.theme.mutedTextColor
+                font.pixelSize: 12
+            }
+
+            Text {
+                Layout.preferredWidth: 190
+                text: "专辑"
+                color: root.theme.mutedTextColor
+                font.pixelSize: 12
+            }
+
+            Text {
+                Layout.preferredWidth: 48
+                text: "时长"
+                color: root.theme.mutedTextColor
+                horizontalAlignment: Text.AlignRight
+                font.pixelSize: 12
+            }
+        }
+
         ListView {
             id: trackList
 
@@ -84,6 +121,17 @@ Item {
             clip: true
             spacing: 2
             visible: count > 0
+            boundsBehavior: Flickable.StopAtBounds
+
+            WheelHandler {
+                target: null
+                onWheel: function(event) {
+                    const maximumY = Math.max(0, trackList.contentHeight - trackList.height)
+                    trackList.contentY = Math.max(0, Math.min(maximumY,
+                        trackList.contentY - event.angleDelta.y * 0.75))
+                    event.accepted = true
+                }
+            }
 
             delegate: Rectangle {
                 id: trackRow
@@ -93,6 +141,7 @@ Item {
                 required property string artist
                 required property string album
                 required property string duration
+                required property string cover
 
                 width: trackList.width
                 height: 58
@@ -104,6 +153,31 @@ Item {
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
                     spacing: 14
+
+                    Rectangle {
+                        Layout.preferredWidth: 44
+                        Layout.preferredHeight: 44
+                        color: root.theme.artworkColor
+                        radius: 4
+                        clip: true
+
+                        Image {
+                            id: coverImage
+                            anchors.fill: parent
+                            source: trackRow.cover
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            visible: status === Image.Ready
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "♫"
+                            color: root.theme.accentColor
+                            font.pixelSize: 18
+                            visible: coverImage.status !== Image.Ready
+                        }
+                    }
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -148,7 +222,7 @@ Item {
                     id: rowMouseArea
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: root.libraryModel.play_track(trackRow.index)
+                    onDoubleClicked: root.libraryModel.play_track(trackRow.index)
                 }
             }
         }
@@ -187,7 +261,7 @@ Item {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.libraryModel.scanStatus || "添加一个本地文件夹开始整理音乐"
+                    text: root.libraryModel.scan_status || "添加一个本地文件夹开始整理音乐"
                     color: root.theme.mutedTextColor
                     font.pixelSize: 13
                 }

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::picture::MimeType;
 use lofty::tag::Accessor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -13,6 +14,12 @@ pub struct TrackMetadata {
     pub album: Option<String>,
     pub artists: Vec<String>,
     pub duration: Option<Duration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverArt {
+    pub data: Vec<u8>,
+    pub extension: String,
 }
 
 #[derive(Debug, Error)]
@@ -61,6 +68,42 @@ pub fn read_track(path: impl AsRef<Path>) -> Result<TrackMetadata, MetadataError
         artists,
         duration: (!duration.is_zero()).then_some(duration),
     })
+}
+
+/// Reads the first embedded picture from a local audio file.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] when the file cannot be opened or parsed by Lofty.
+pub fn read_cover(path: impl AsRef<Path>) -> Result<Option<CoverArt>, MetadataError> {
+    let path = path.as_ref();
+    let tagged_file = lofty::read_from_path(path).map_err(|error| MetadataError::Read {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let picture = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag())
+        .and_then(|tag| tag.pictures().first());
+
+    Ok(picture.map(|picture| CoverArt {
+        data: picture.data().to_vec(),
+        extension: picture
+            .mime_type()
+            .map_or("bin", cover_extension)
+            .to_owned(),
+    }))
+}
+
+fn cover_extension(mime_type: &MimeType) -> &'static str {
+    match mime_type {
+        MimeType::Jpeg => "jpg",
+        MimeType::Png => "png",
+        MimeType::Tiff => "tiff",
+        MimeType::Bmp => "bmp",
+        MimeType::Gif => "gif",
+        _ => "bin",
+    }
 }
 
 #[cfg(test)]

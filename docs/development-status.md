@@ -51,6 +51,8 @@
 ### 元数据与曲库导入
 
 - [`read_track`](../crates/metadata/src/lib.rs) 使用 Lofty 读取标题、专辑、歌手和时长。
+- [`read_cover`](../crates/metadata/src/lib.rs) 可读取首张内嵌封面；扫描线程将封面按内容哈希缓存到
+  XDG 缓存目录，Qt 模型只传递本地文件 URL。
 - 缺失标题时回退到文件名；读取错误保留文件路径和稳定错误文本。
 - [`MusicLibrary`](../crates/library/src/lib.rs) 可递归扫描目录，组合 Metadata、Chinese 和 Storage。
 - 扫描支持按修改时间跳过未变化文件，并汇总导入、跳过和失败数量。
@@ -62,16 +64,23 @@
 - [`Player::initialize`](../crates/player/src/lib.rs) 可初始化 GStreamer 并创建 `playbin`。
 - [`PlaybackState`](../crates/player/src/lib.rs) 已定义 `Stopped`、`Paused` 和 `Playing`。
 - `Player` 可校验并加载本地文件，支持播放、暂停和停止，并可读取当前路径与状态。
+- `Player` 在 GStreamer Bus 上监听播放结束和异步错误；播放结束后可驱动下一首，错误可回传界面。
+- 缺少格式插件时会给出具体元素名称，缺少 `autoaudiosink` 时尝试使用 `pipewiresink`。
 - 播放器析构时会将 GStreamer 元素切换到 `Null` 状态。
+- 已安装并验证 `gst-plugins-good` 与 `gst-plugins-base`：真实 FLAC、MP3 均可通过
+  `playbin` 完整解码至 EOS。
 
 ### Qt Bridge 与界面
 
 - [`AppBridge`](../crates/ui_bridge/src/lib.rs) 已注册为 `Qingyin 1.0/AppBridge`。
 - QML 可调用 `application_name()` 和 `version()`。
-- `AppBridge` 已实现 `QAbstractListModel`，提供标题、歌手、专辑、时长和路径角色。
+- `AppBridge` 已实现 `QAbstractListModel`，提供标题、歌手、专辑、时长、路径和封面角色。
 - 文件夹扫描在工作线程执行，并通过 Qt queued callback 在主线程重置曲库模型。
-- QML 可调用 `add_library_folder`、`play_track` 和 `toggle_playback`。
-- 播放状态、当前标题和当前歌手已作为 Qt 属性绑定到播放栏。
+- QML 可调用 `add_library_folder`、`play_track`、`toggle_playback`、`play_previous` 和
+  `play_next`。
+- 播放状态、错误、当前标题、歌手和封面已作为 Qt 属性绑定到播放栏。
+- GStreamer EOS 会自动播放列表中的下一首；到达列表末尾后停止。
+- Qt Bridge 已导出播放位置、总时长、seek 和音量控制，并由播放栏定时同步。
 - [`Main.qml`](../qml/Main.qml) 已使用无边框窗口，KDE 原生标题栏不再显示。
 - [`WindowControls.qml`](../qml/WindowControls.qml) 已实现窗口拖动、最小化、最大化/还原和关闭。
 - [`ResizeHandle.qml`](../qml/ResizeHandle.qml) 已通过系统级缩放 API 提供四边和四角缩放。
@@ -79,7 +88,11 @@
 - 侧边栏已纵向贯穿应用，顶部显示应用标题和折叠按钮，底部显示设置入口。
 - 侧边栏折叠后仅显示导航图标，导航和设置页切换可用。
 - [`Settings.qml`](../qml/Settings.qml) 已提供浅色与深色主题选择，两套主题可即时切换。
-- [`Library.qml`](../qml/Library.qml) 可选择文件夹、显示扫描状态和真实曲目列表，点击曲目可播放。
+- [`Library.qml`](../qml/Library.qml) 可选择文件夹、显示扫描状态和真实曲目列表，点击曲目可播放；
+  列表含固定列标题、封面与加速滚轮滚动。
+- [`PlayerBar.qml`](../qml/PlayerBar.qml) 已显示当前封面、标题、歌手和错误，并接通
+  播放/暂停、上一首、下一首、进度拖动与音量；核心播放控件保持窗口几何居中。
+- 曲库改为双击曲目后切换并播放，单击不会打断当前歌曲。
 - [`Search.qml`](../qml/Search.qml) 已提供中文及拼音提示的搜索输入框。
 - 歌手、专辑和播放栏视图已完成初始布局与空状态。
 
@@ -88,13 +101,13 @@
 | 模块 | 当前已有 | 尚未贯通 |
 | --- | --- | --- |
 | Core | `AppCore`、队列、设置类型 | 未建立应用服务生命周期，未被 `AppBridge` 持有 |
-| Player | `playbin`、本地文件加载、播放/暂停/停止 | 未接 Qt 属性、事件、seek、音量和播放结束处理 |
-| Metadata | 标签与时长读取、标题回退 | 尚未读取和缓存封面 |
-| Library | 递归增量扫描、失败摘要、数据库持久化 | 尚未后台执行、监听文件变化或接入 Qt 模型 |
+| Player | `playbin`、播放/暂停/停止、位置、seek、音量、EOS 与错误事件 | 尚无主动状态变化事件 |
+| Metadata | 标签、时长与封面读取、标题回退 | 超过缓存输入上限的封面会降级为占位图 |
+| Library | 递归增量扫描、失败摘要、数据库持久化 | 尚未监听运行期间的文件变化 |
 | Storage | SQLite schema、事务 upsert、列表和删除 | 尚无搜索查询、聚合查询和迁移升级 |
 | Chinese | 全拼与首字母搜索键 | ICU4X 排序、`ARTISTSORT` 和多音字覆盖未实现 |
-| UI Bridge | 曲库列表模型、后台扫描、点击播放、播放/暂停属性与方法 | 尚无搜索、扫描进度、seek、音量和播放结束事件 |
-| QML | 曲库导入与列表、点击播放、播放/暂停、窗口控制、导航和双主题 | 搜索、歌手、专辑、进度、音量、上下曲尚未绑定，主题未持久化 |
+| UI Bridge | 曲库模型、后台扫描、封面、进度、seek、音量、EOS 与错误处理 | 尚无搜索和细粒度扫描进度 |
+| QML | 曲库导入、封面、连续播放、完整播放栏、窗口控制、导航和双主题 | 搜索、歌手和专辑尚未贯通，主题未持久化 |
 
 ## 待实现接口
 
@@ -105,7 +118,8 @@
 #### Metadata
 
 - `read_track(path) -> Result<TrackMetadata, MetadataError>`：已完成。
-- `read_cover(path) -> Result<Option<CoverArt>, MetadataError>`：读取并限制封面尺寸。
+- `read_cover(path) -> Result<Option<CoverArt>, MetadataError>`：已完成首张内嵌封面读取；
+  尺寸限制与缩放待实现。
 - 缺失标签应提供文件名等回退值，而不是阻断曲库导入。
 
 #### Storage
@@ -130,8 +144,9 @@
 - `pause() -> Result<(), PlayerError>`：已完成。
 - `stop() -> Result<(), PlayerError>`：已完成。
 - `seek(position) -> Result<(), PlayerError>`
-- 查询接口：当前曲目、播放状态、位置、时长和音量。
-- 事件接口：状态变化、位置变化、曲目结束和播放错误。
+- 已有查询接口：当前曲目和播放状态。
+- 查询接口：当前曲目、播放状态、位置、时长和音量均已完成。
+- 已有事件接口：曲目结束和播放错误；状态变化与位置变化仍需完善。
 
 #### Core
 
@@ -141,7 +156,7 @@
 
 #### UI Bridge
 
-- 曲库模型：实现 `QAbstractListModel`，提供标题、歌手、专辑、时长和封面角色。
+- 曲库模型：已实现 `QAbstractListModel`，提供标题、歌手、专辑、时长和封面角色。
 - 属性：`playbackState`、`currentTrack`、`position`、`duration`、`volume`。
 - 方法：`addLibraryFolder`、`search`、`playTrack`、`togglePlayback`、`seek`。
 - 信号：曲库变化、扫描进度、播放状态变化和错误通知。
@@ -151,7 +166,7 @@
 
 - 将文件夹选择结果连接到 `AppBridge.addLibraryFolder`。
 - 曲库、歌手、专辑和搜索页绑定后端模型。
-- 播放、暂停、上一首、下一首、进度和音量控件连接播放器属性与方法。
+- 播放、暂停、上一首、下一首、进度和音量均已接通。
 - 增加扫描中、空结果、文件不可读和播放失败状态。
 
 ### P1：完整曲库体验
@@ -174,7 +189,7 @@
 ## 当前未接通的界面操作
 
 - 搜索框可以输入，但没有触发后端搜索，也没有结果模型。
-- 上一首、下一首、进度和音量控件尚未接后端。
+- 歌手与专辑页仍是静态骨架，没有聚合模型和详情导航。
 - 浅色/深色主题可即时切换，但重启应用后不会保留选择。
 
 ## 验证基线

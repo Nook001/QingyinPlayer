@@ -1,6 +1,10 @@
 use gst::prelude::*;
 use gstreamer as gst;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::JoinHandle;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -9,6 +13,12 @@ pub enum PlaybackState {
     Stopped,
     Paused,
     Playing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlayerEvent {
+    EndOfStream,
+    Error(String),
 }
 
 #[derive(Debug, Error)]
@@ -31,8 +41,14 @@ pub enum PlayerError {
     #[error("required GStreamer plugins are missing for {}: {plugins}", path.display())]
     MissingPlugins { path: PathBuf, plugins: String },
 
+    #[error("GStreamer playbin does not provide an event bus")]
+    MissingBus,
+
     #[error("GStreamer state change failed: {0}")]
     StateChange(String),
+
+    #[error("GStreamer seek failed: {0}")]
+    Seek(String),
 }
 
 #[derive(Debug)]
@@ -40,6 +56,13 @@ pub struct Player {
     state: PlaybackState,
     playbin: gst::Element,
     current_path: Option<PathBuf>,
+    event_monitor: Option<EventMonitor>,
+}
+
+#[derive(Debug)]
+struct EventMonitor {
+    stop_requested: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Player {
@@ -63,6 +86,7 @@ impl Player {
             state: PlaybackState::Stopped,
             playbin,
             current_path: None,
+            event_monitor: None,
         })
     }
 
@@ -74,6 +98,76 @@ impl Player {
     #[must_use]
     pub fn current_path(&self) -> Option<&Path> {
         self.current_path.as_deref()
+    }
+
+    #[must_use]
+    pub fn position(&self) -> Option<Duration> {
+        self.playbin
+            .query_position::<gst::ClockTime>()
+            .map(|position| Duration::from_nanos(position.nseconds()))
+    }
+
+    #[must_use]
+    pub fn duration(&self) -> Option<Duration> {
+        self.playbin
+            .query_duration::<gst::ClockTime>()
+            .map(|duration| Duration::from_nanos(duration.nseconds()))
+    }
+
+    #[must_use]
+    pub fn volume(&self) -> f64 {
+        self.playbin.property("volume")
+    }
+
+    pub fn set_volume(&mut self, volume: f64) {
+        self.playbin.set_property("volume", volume.clamp(0.0, 1.0));
+    }
+
+    /// Seeks within the loaded track.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlayerError`] when `GStreamer` rejects the seek operation.
+    pub fn seek(&mut self, position: Duration) -> Result<(), PlayerError> {
+        let position =
+            gst::ClockTime::from_nseconds(u64::try_from(position.as_nanos()).unwrap_or(u64::MAX));
+        self.playbin
+            .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, position)
+            .map_err(|error| PlayerError::Seek(error.to_string()))
+    }
+
+    /// Starts forwarding end-of-stream and playback errors to `handler`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlayerError`] when the playback element has no event bus.
+    pub fn set_event_handler<F>(&mut self, handler: F) -> Result<(), PlayerError>
+    where
+        F: Fn(PlayerEvent) + Send + 'static,
+    {
+        self.event_monitor = None;
+        let bus = self.playbin.bus().ok_or(PlayerError::MissingBus)?;
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let monitor_stop = Arc::clone(&stop_requested);
+        let thread = std::thread::spawn(move || {
+            while !monitor_stop.load(Ordering::Relaxed) {
+                let Some(message) = bus.timed_pop(Some(gst::ClockTime::from_mseconds(250))) else {
+                    continue;
+                };
+                match message.view() {
+                    gst::MessageView::Eos(_) => handler(PlayerEvent::EndOfStream),
+                    gst::MessageView::Error(error) => {
+                        handler(PlayerEvent::Error(format_bus_error(error)));
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self.event_monitor = Some(EventMonitor {
+            stop_requested,
+            thread: Some(thread),
+        });
+        Ok(())
     }
 
     /// Loads a local audio file without starting playback.
@@ -181,6 +275,15 @@ impl Player {
     }
 }
 
+fn format_bus_error(error: &gst::message::Error) -> String {
+    let mut message = error.error().to_string();
+    if let Some(debug) = error.debug() {
+        message.push_str(": ");
+        message.push_str(&debug);
+    }
+    message
+}
+
 fn ensure_format_plugins(path: &Path) -> Result<(), PlayerError> {
     let required = match path
         .extension()
@@ -211,5 +314,14 @@ fn ensure_format_plugins(path: &Path) -> Result<(), PlayerError> {
 impl Drop for Player {
     fn drop(&mut self) {
         let _ = self.playbin.set_state(gst::State::Null);
+    }
+}
+
+impl Drop for EventMonitor {
+    fn drop(&mut self) {
+        self.stop_requested.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
