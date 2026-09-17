@@ -9,6 +9,7 @@ Rectangle {
 
     required property var theme
     required property real cornerRadius
+    required property var playerBackend
 
     color: root.theme.surfaceColor
     radius: root.cornerRadius
@@ -60,7 +61,7 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "未在播放"
+                text: root.playerBackend.currentTitle || "未在播放"
                 elide: Text.ElideRight
                 color: root.theme.textColor
                 font.pixelSize: 14
@@ -69,10 +70,21 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "从曲库中选择一首歌曲"
+                text: root.playerBackend.playbackError
+                    || root.playerBackend.currentArtist
+                    || "从曲库中选择一首歌曲"
                 elide: Text.ElideRight
-                color: root.theme.mutedTextColor
+                color: root.playerBackend.playbackError
+                    ? root.theme.accentPressedColor : root.theme.mutedTextColor
                 font.pixelSize: 12
+                ToolTip.visible: truncated && mouseArea.containsMouse
+                ToolTip.text: text
+
+                MouseArea {
+                    id: mouseArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                }
             }
         }
 
@@ -91,10 +103,11 @@ Rectangle {
             RoundButton {
                 Layout.preferredWidth: 46
                 Layout.preferredHeight: 46
-                text: "▶"
-                enabled: false
+                text: root.playerBackend.playbackState === "playing" ? "Ⅱ" : "▶"
+                enabled: root.playerBackend.currentTitle !== ""
+                onClicked: root.playerBackend.toggle_playback()
                 ToolTip.visible: hovered
-                ToolTip.text: "播放"
+                ToolTip.text: root.playerBackend.playbackState === "playing" ? "暂停" : "播放"
             }
 
             ToolButton {

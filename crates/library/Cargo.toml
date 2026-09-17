@@ -9,6 +9,7 @@ notify.workspace = true
 qingyin-chinese = { path = "../chinese" }
 qingyin-metadata = { path = "../metadata" }
 qingyin-storage = { path = "../storage" }
+thiserror.workspace = true
 tracing.workspace = true
 
 [lints]

@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+qingyin-chinese = { path = "../chinese" }
+qingyin-metadata = { path = "../metadata" }
 rusqlite.workspace = true
 thiserror.workspace = true
 

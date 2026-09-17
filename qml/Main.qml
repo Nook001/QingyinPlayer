@@ -260,7 +260,10 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 currentIndex: window.currentView
 
-                Library { theme: window }
+                Library {
+                    theme: window
+                    libraryModel: backend
+                }
                 Artist { theme: window }
                 Album { theme: window }
                 Search { theme: window }
@@ -278,6 +281,7 @@ ApplicationWindow {
                 Layout.preferredHeight: 88
                 theme: window
                 cornerRadius: window.cornerRadius
+                playerBackend: backend
             }
         }
     }
