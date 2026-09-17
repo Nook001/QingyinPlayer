@@ -11,6 +11,17 @@ Item {
     required property var theme
     required property var libraryModel
 
+    readonly property bool filtering: searchField.text.trim() !== ""
+    readonly property bool waitingForSearch: filtering
+        && (root.libraryModel.searching
+            || searchField.text.trim() !== String(root.libraryModel.search_query).trim())
+
+    Timer {
+        id: searchDelay
+        interval: 180
+        onTriggered: root.libraryModel.search_tracks(searchField.text)
+    }
+
     FolderDialog {
         id: folderDialog
         title: "选择音乐文件夹"
@@ -69,168 +80,62 @@ Item {
             }
         }
 
+        TextField {
+            id: searchField
+
+            Layout.fillWidth: true
+            Layout.preferredHeight: 44
+            placeholderText: "搜索歌名、歌手或专辑，也可输入拼音或首字母"
+            leftPadding: 14
+            rightPadding: 14
+            font.pixelSize: 14
+            color: root.theme.textColor
+            onTextChanged: {
+                if (text.trim() === "") {
+                    searchDelay.stop()
+                    root.libraryModel.clear_search()
+                } else {
+                    searchDelay.restart()
+                }
+            }
+
+            background: Rectangle {
+                color: root.theme.fieldColor
+                border.color: searchField.activeFocus
+                    ? root.theme.accentColor : root.theme.dividerColor
+                border.width: searchField.activeFocus ? 2 : 1
+                radius: 6
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: root.filtering
+            text: root.libraryModel.search_status
+            color: root.theme.mutedTextColor
+            font.pixelSize: 12
+        }
+
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: root.theme.dividerColor
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            spacing: 14
-            visible: trackList.count > 0
-
-            Text {
-                Layout.preferredWidth: 44
-                text: "封面"
-                color: root.theme.mutedTextColor
-                font.pixelSize: 12
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "歌曲名"
-                color: root.theme.mutedTextColor
-                font.pixelSize: 12
-            }
-
-            Text {
-                Layout.preferredWidth: 190
-                text: "专辑"
-                color: root.theme.mutedTextColor
-                font.pixelSize: 12
-            }
-
-            Text {
-                Layout.preferredWidth: 48
-                text: "时长"
-                color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignRight
-                font.pixelSize: 12
-            }
-        }
-
-        ListView {
-            id: trackList
-
+        TrackTable {
+            id: trackTable
             Layout.fillWidth: true
             Layout.fillHeight: true
-            model: root.libraryModel
-            clip: true
-            spacing: 2
-            visible: count > 0
-            boundsBehavior: Flickable.StopAtBounds
-
-            WheelHandler {
-                target: null
-                onWheel: function(event) {
-                    const maximumY = Math.max(0, trackList.contentHeight - trackList.height)
-                    trackList.contentY = Math.max(0, Math.min(maximumY,
-                        trackList.contentY - event.angleDelta.y * 0.75))
-                    event.accepted = true
-                }
-            }
-
-            delegate: Rectangle {
-                id: trackRow
-
-                required property int index
-                required property string title
-                required property string artist
-                required property string album
-                required property string duration
-                required property string cover
-
-                width: trackList.width
-                height: 58
-                color: rowMouseArea.containsMouse ? root.theme.hoverColor : "transparent"
-                radius: 5
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 14
-
-                    Rectangle {
-                        Layout.preferredWidth: 44
-                        Layout.preferredHeight: 44
-                        color: root.theme.artworkColor
-                        radius: 4
-                        clip: true
-
-                        Image {
-                            id: coverImage
-                            anchors.fill: parent
-                            source: trackRow.cover
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            visible: status === Image.Ready
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "♫"
-                            color: root.theme.accentColor
-                            font.pixelSize: 18
-                            visible: coverImage.status !== Image.Ready
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: trackRow.title
-                            color: root.theme.textColor
-                            elide: Text.ElideRight
-                            font.pixelSize: 14
-                            font.weight: Font.DemiBold
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: trackRow.artist || "未知歌手"
-                            color: root.theme.mutedTextColor
-                            elide: Text.ElideRight
-                            font.pixelSize: 12
-                        }
-                    }
-
-                    Text {
-                        Layout.preferredWidth: 190
-                        text: trackRow.album
-                        color: root.theme.mutedTextColor
-                        elide: Text.ElideRight
-                        font.pixelSize: 12
-                    }
-
-                    Text {
-                        Layout.preferredWidth: 48
-                        text: trackRow.duration
-                        color: root.theme.mutedTextColor
-                        horizontalAlignment: Text.AlignRight
-                        font.pixelSize: 12
-                    }
-                }
-
-                MouseArea {
-                    id: rowMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onDoubleClicked: root.libraryModel.play_track(trackRow.index)
-                }
-            }
+            theme: root.theme
+            trackModel: root.libraryModel
+            visible: count > 0 && !root.waitingForSearch
+            onTrackActivated: function(row) { root.libraryModel.play_track(row) }
         }
 
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: trackList.count === 0
+            visible: !trackTable.visible
 
             Column {
                 anchors.centerIn: parent
@@ -242,6 +147,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     radius: 38
                     color: root.theme.subtleColor
+                    visible: !root.filtering
 
                     Text {
                         anchors.centerIn: parent
@@ -253,7 +159,13 @@ Item {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.libraryModel.scanning ? "正在扫描音乐" : "曲库还是空的"
+                    text: {
+                        if (root.waitingForSearch)
+                            return "正在搜索…"
+                        if (root.filtering)
+                            return "没有找到匹配的歌曲"
+                        return root.libraryModel.scanning ? "正在扫描音乐" : "曲库还是空的"
+                    }
                     color: root.theme.textColor
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
@@ -261,6 +173,7 @@ Item {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
+                    visible: !root.filtering
                     text: root.libraryModel.scan_status || "添加一个本地文件夹开始整理音乐"
                     color: root.theme.mutedTextColor
                     font.pixelSize: 13

@@ -125,8 +125,7 @@ ApplicationWindow {
                     model: [
                         { label: "曲库", icon: "♫" },
                         { label: "歌手", icon: "♬" },
-                        { label: "专辑", icon: "▣" },
-                        { label: "搜索", icon: "⌕" }
+                        { label: "专辑", icon: "▣" }
                     ]
 
                     delegate: Button {
@@ -196,7 +195,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
                     text: "设置"
-                    onClicked: window.currentView = 4
+                    onClicked: window.currentView = 3
                     ToolTip.visible: hovered && window.sidebarCollapsed
                     ToolTip.text: settingsButton.text
 
@@ -206,7 +205,7 @@ ApplicationWindow {
                         Text {
                             Layout.preferredWidth: 34
                             text: "⚙"
-                            color: window.currentView === 4 ? "#FFFFFF" : window.sidebarTextColor
+                            color: window.currentView === 3 ? "#FFFFFF" : window.sidebarTextColor
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                             font.pixelSize: 17
@@ -216,15 +215,15 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: !window.sidebarCollapsed
                             text: settingsButton.text
-                            color: window.currentView === 4 ? "#FFFFFF" : window.sidebarTextColor
+                            color: window.currentView === 3 ? "#FFFFFF" : window.sidebarTextColor
                             font.pixelSize: 14
-                            font.weight: window.currentView === 4 ? Font.DemiBold : Font.Normal
+                            font.weight: window.currentView === 3 ? Font.DemiBold : Font.Normal
                             verticalAlignment: Text.AlignVCenter
                         }
                     }
 
                     background: Rectangle {
-                        color: window.currentView === 4
+                        color: window.currentView === 3
                             ? window.sidebarSelectedColor : "transparent"
                         radius: 6
 
@@ -234,7 +233,7 @@ ApplicationWindow {
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             color: window.accentColor
-                            visible: window.currentView === 4
+                            visible: window.currentView === 3
                             radius: 2
                         }
                     }
@@ -266,7 +265,6 @@ ApplicationWindow {
                 }
                 Artist { theme: window }
                 Album { theme: window }
-                Search { theme: window }
                 Settings {
                     theme: window
                     darkMode: window.darkTheme

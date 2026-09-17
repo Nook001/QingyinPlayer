@@ -6,6 +6,7 @@ use qingyin_player::{PlaybackState, Player, PlayerEvent};
 use qingyin_storage::Database;
 use qmetaobject::QUrl;
 use qmetaobject::prelude::*;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::Cursor;
@@ -22,6 +23,7 @@ const MAX_COVER_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COVER_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_COVER_SOURCE_EDGE: u32 = 8192;
 const MAX_COVER_EDGE: u32 = 512;
+const SEARCH_RESULT_LIMIT: usize = 500;
 
 #[derive(Debug)]
 struct ScanResult {
@@ -30,12 +32,27 @@ struct ScanResult {
     status: String,
 }
 
+#[derive(Debug)]
+struct SearchResult {
+    tracks: Vec<TrackMetadata>,
+}
+
 #[allow(missing_debug_implementations)]
 #[derive(QObject, Default)]
 pub struct AppBridge {
     base: qt_base_class!(trait QAbstractListModel),
     tracks: Vec<TrackMetadata>,
     cover_urls: Vec<String>,
+    library_tracks: Vec<TrackMetadata>,
+    library_cover_urls: Vec<String>,
+    search_generation: u64,
+    search_query: qt_property!(QString; NOTIFY search_changed),
+    searching: qt_property!(bool; NOTIFY search_changed),
+    search_status: qt_property!(QString; NOTIFY search_changed),
+    search_changed: qt_signal!(),
+    sort_column: qt_property!(QString; NOTIFY sort_changed),
+    sort_ascending: qt_property!(bool; NOTIFY sort_changed),
+    sort_changed: qt_signal!(),
     scanning: qt_property!(bool; NOTIFY scanning_changed),
     scanning_changed: qt_signal!(),
     scan_status: qt_property!(QString; NOTIFY scan_status_changed),
@@ -95,10 +112,11 @@ pub struct AppBridge {
                     bridge.scanning_changed();
                     match result {
                         Ok(result) => {
-                            bridge.begin_reset_model();
-                            bridge.tracks = result.tracks;
-                            bridge.cover_urls = result.cover_urls;
-                            bridge.end_reset_model();
+                            bridge.library_tracks = result.tracks;
+                            bridge.library_cover_urls = result.cover_urls;
+                            if bridge.search_query.is_empty() {
+                                bridge.show_library_tracks();
+                            }
                             bridge.scan_status = result.status.into();
                         }
                         Err(error) => bridge.scan_status = error.into(),
@@ -145,6 +163,23 @@ pub struct AppBridge {
     set_player_volume: qt_method!(
         fn set_player_volume(&mut self, volume: f64) {
             self.set_player_volume_internal(volume);
+        }
+    ),
+    search_tracks: qt_method!(
+        #[allow(clippy::needless_pass_by_value)]
+        fn search_tracks(&mut self, query: QString) {
+            self.search_tracks_internal(&query);
+        }
+    ),
+    clear_search: qt_method!(
+        fn clear_search(&mut self) {
+            self.clear_search_internal();
+        }
+    ),
+    set_sort: qt_method!(
+        #[allow(clippy::needless_pass_by_value)]
+        fn set_sort(&mut self, column: QString) {
+            self.set_sort_internal(&column);
         }
     ),
 }
@@ -295,6 +330,126 @@ impl AppBridge {
         self.playback_progress_changed();
     }
 
+    fn search_tracks_internal(&mut self, query: &QString) {
+        let query = query.to_string().trim().to_owned();
+        if query.is_empty() {
+            self.clear_search_internal();
+            return;
+        }
+
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let generation = self.search_generation;
+        self.search_query = query.clone().into();
+        self.searching = true;
+        self.search_status = "正在搜索…".into();
+        self.search_changed();
+
+        let bridge = QPointer::from(&*self);
+        let apply_result =
+            qmetaobject::queued_callback(move |result: Result<SearchResult, String>| {
+                let Some(bridge) = bridge.as_pinned() else {
+                    return;
+                };
+                let mut bridge = bridge.borrow_mut();
+                if bridge.search_generation != generation {
+                    return;
+                }
+                bridge.searching = false;
+                match result {
+                    Ok(result) => {
+                        let count = result.tracks.len();
+                        let cover_urls = result
+                            .tracks
+                            .iter()
+                            .map(|track| bridge.library_cover_for_path(&track.path))
+                            .collect();
+                        let apply_column_sort = !bridge.sort_column.is_empty();
+                        bridge.replace_visible_tracks(result.tracks, cover_urls, apply_column_sort);
+                        bridge.search_status = format!("找到 {count} 首歌曲").into();
+                    }
+                    Err(error) => bridge.search_status = error.into(),
+                }
+                bridge.search_changed();
+            });
+
+        std::thread::spawn(move || apply_result(search_database(&query)));
+    }
+
+    fn clear_search_internal(&mut self) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        self.search_query = QString::default();
+        self.searching = false;
+        self.search_status = QString::default();
+        self.show_library_tracks();
+        self.search_changed();
+    }
+
+    fn set_sort_internal(&mut self, column: &QString) {
+        let column = column.to_string();
+        if !matches!(column.as_str(), "title" | "album" | "duration") {
+            return;
+        }
+        if self.sort_column == QString::from(column.clone()) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = column.into();
+            self.sort_ascending = true;
+        }
+        self.sort_visible_tracks();
+        self.sort_changed();
+    }
+
+    fn show_library_tracks(&mut self) {
+        self.replace_visible_tracks(
+            self.library_tracks.clone(),
+            self.library_cover_urls.clone(),
+            true,
+        );
+    }
+
+    fn replace_visible_tracks(
+        &mut self,
+        tracks: Vec<TrackMetadata>,
+        cover_urls: Vec<String>,
+        apply_column_sort: bool,
+    ) {
+        let current_path = self
+            .player
+            .as_ref()
+            .and_then(|player| player.current_path())
+            .map(Path::to_path_buf);
+        self.begin_reset_model();
+        self.tracks = tracks;
+        self.cover_urls = cover_urls;
+        if apply_column_sort {
+            sort_tracks(
+                &mut self.tracks,
+                &mut self.cover_urls,
+                &self.sort_column.to_string(),
+                self.sort_ascending,
+            );
+        }
+        self.end_reset_model();
+        self.current_index = current_path
+            .as_ref()
+            .and_then(|path| self.tracks.iter().position(|track| &track.path == path));
+    }
+
+    fn sort_visible_tracks(&mut self) {
+        let tracks = std::mem::take(&mut self.tracks);
+        let cover_urls = std::mem::take(&mut self.cover_urls);
+        self.replace_visible_tracks(tracks, cover_urls, true);
+    }
+
+    fn library_cover_for_path(&self, path: &Path) -> String {
+        self.library_tracks
+            .iter()
+            .position(|track| track.path == path)
+            .and_then(|index| self.library_cover_urls.get(index))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     fn handle_player_event(&mut self, event: PlayerEvent) {
         match event {
             PlayerEvent::EndOfStream => self.play_next_internal(),
@@ -374,6 +529,56 @@ fn scan_music_directory(path: &Path) -> Result<ScanResult, String> {
         cover_urls,
         status,
     })
+}
+
+fn search_database(query: &str) -> Result<SearchResult, String> {
+    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+    let tracks = database
+        .search_tracks(query, SEARCH_RESULT_LIMIT)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|track| track.metadata)
+        .collect();
+    Ok(SearchResult { tracks })
+}
+
+fn sort_tracks(
+    tracks: &mut Vec<TrackMetadata>,
+    cover_urls: &mut Vec<String>,
+    column: &str,
+    ascending: bool,
+) {
+    let ascending = column.is_empty() || ascending;
+    cover_urls.resize(tracks.len(), String::new());
+    let mut rows = std::mem::take(tracks)
+        .into_iter()
+        .zip(std::mem::take(cover_urls))
+        .collect::<Vec<_>>();
+    rows.sort_by(|(left, _), (right, _)| {
+        let ordering = compare_tracks(left, right, column).then_with(|| left.path.cmp(&right.path));
+        if ascending {
+            ordering
+        } else {
+            ordering.reverse()
+        }
+    });
+    let (sorted_tracks, sorted_covers) = rows.into_iter().unzip();
+    *tracks = sorted_tracks;
+    *cover_urls = sorted_covers;
+}
+
+fn compare_tracks(left: &TrackMetadata, right: &TrackMetadata, column: &str) -> Ordering {
+    match column {
+        "album" => compare_text(left.album.as_deref(), right.album.as_deref()),
+        "duration" => left.duration.cmp(&right.duration),
+        _ => compare_text(Some(&left.title), Some(&right.title)),
+    }
+}
+
+fn compare_text(left: Option<&str>, right: Option<&str>) -> Ordering {
+    left.unwrap_or_default()
+        .to_lowercase()
+        .cmp(&right.unwrap_or_default().to_lowercase())
 }
 
 fn cache_cover_urls(tracks: &[TrackMetadata]) -> Vec<String> {
@@ -490,5 +695,31 @@ mod tests {
     fn oversized_cover_source_is_rejected() {
         let source = vec![0; MAX_COVER_SOURCE_BYTES + 1];
         assert!(prepare_cached_cover(&source).is_none());
+    }
+
+    #[test]
+    fn sorts_tracks_by_selected_column_and_direction() {
+        let mut tracks = vec![test_track("B", "专辑甲", 20), test_track("A", "专辑乙", 10)];
+        let mut covers = vec!["B封面".to_owned(), "A封面".to_owned()];
+
+        sort_tracks(&mut tracks, &mut covers, "title", true);
+        assert_eq!(tracks[0].title, "A");
+        assert_eq!(tracks[1].title, "B");
+        assert_eq!(covers, ["A封面", "B封面"]);
+
+        sort_tracks(&mut tracks, &mut covers, "duration", false);
+        assert_eq!(tracks[0].duration, Some(Duration::from_secs(20)));
+        assert_eq!(tracks[1].duration, Some(Duration::from_secs(10)));
+        assert_eq!(covers, ["B封面", "A封面"]);
+    }
+
+    fn test_track(title: &str, album: &str, duration: u64) -> TrackMetadata {
+        TrackMetadata {
+            path: format!("/music/{title}.flac").into(),
+            title: title.to_owned(),
+            album: Some(album.to_owned()),
+            artists: Vec::new(),
+            duration: Some(Duration::from_secs(duration)),
+        }
     }
 }

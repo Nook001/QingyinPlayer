@@ -26,8 +26,8 @@ Qingyin / 清音
 │         Qt Quick / QML           │
 │                                  │
 │ Library / Artist / Album / Track │
-│ Search / Queue / Player Bar      │
-│ Settings / Window Controls       │
+│ Queue / Player Bar / Settings    │
+│ Window Controls                  │
 └───────┬─────────┘
                 │
          Qt Rust Bridge
@@ -68,7 +68,6 @@ qingyin/
 │   ├── Library.qml
 │   ├── Artist.qml
 │   ├── Album.qml
-│   ├── Search.qml
 │   ├── PlayerBar.qml
 │   ├── Settings.qml
 │   ├── WindowControls.qml

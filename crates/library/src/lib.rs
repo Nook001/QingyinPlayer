@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use qingyin_chinese::{SearchKey, search_key};
 use qingyin_metadata::{MetadataError, TrackMetadata, read_track};
 use qingyin_storage::{Database, StorageError};
 use thiserror::Error;
@@ -53,16 +52,6 @@ impl MusicLibrary {
         self.tracks = tracks;
     }
 
-    #[must_use]
-    pub fn search_key_for(track: &TrackMetadata) -> SearchKey {
-        let mut terms = vec![track.title.as_str()];
-        terms.extend(track.artists.iter().map(String::as_str));
-        if let Some(album) = &track.album {
-            terms.push(album);
-        }
-        search_key(&terms.join(" "))
-    }
-
     /// Recursively scans a directory and persists changed audio files.
     ///
     /// Individual metadata failures are returned in [`ScanSummary`].
@@ -92,8 +81,7 @@ impl MusicLibrary {
 
             match read_track(&path) {
                 Ok(track) => {
-                    let key = Self::search_key_for(&track);
-                    database.upsert_track(&track, &key, modified_at)?;
+                    database.upsert_track(&track, modified_at)?;
                     summary.imported += 1;
                 }
                 Err(error) => summary.failed.push(scan_failure(path, &error)),

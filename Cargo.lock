@@ -1367,7 +1367,6 @@ name = "qingyin-library"
 version = "0.1.0"
 dependencies = [
  "notify",
- "qingyin-chinese",
  "qingyin-metadata",
  "qingyin-storage",
  "thiserror",
