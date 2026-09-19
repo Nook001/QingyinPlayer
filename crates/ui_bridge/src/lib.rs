@@ -52,10 +52,13 @@ struct SearchResult {
 #[derive(QObject, Default)]
 pub struct AppBridge {
     base: qt_base_class!(trait QAbstractListModel),
+    /// Visible rows bound by the library `TrackTable` (search results or full library).
     tracks: Vec<TrackMetadata>,
     cover_urls: Vec<String>,
+    /// Full imported library, independent of the current search filter.
     library_tracks: Vec<TrackMetadata>,
     library_cover_urls: Vec<String>,
+    /// Playback session order; not replaced when the visible list is filtered or sorted.
     playback_tracks: Vec<TrackMetadata>,
     playback_cover_urls: Vec<String>,
     artist_model: qt_property!(RefCell<CollectionModel>; CONST),
@@ -301,7 +304,9 @@ impl AppBridge {
             self.set_playback_error(error);
             return;
         }
-        let player = self.player.as_mut().expect("player was initialized");
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
         if let Err(error) = player.load(&track.path).and_then(|()| player.play()) {
             self.set_playback_error(error.to_string());
             return;
@@ -325,9 +330,10 @@ impl AppBridge {
     }
 
     fn toggle_playback_internal(&mut self) {
-        let Some(state) = self.player.as_ref().map(Player::state) else {
+        let Some(player) = self.player.as_mut() else {
             return;
         };
+        let state = player.state();
         if state == PlaybackState::Stopped {
             if let Some(row) = self.current_index.and_then(|row| i32::try_from(row).ok()) {
                 self.play_queue_row(row);
@@ -335,7 +341,6 @@ impl AppBridge {
             return;
         }
 
-        let player = self.player.as_mut().expect("player exists");
         let result = match state {
             PlaybackState::Playing => player.pause(),
             PlaybackState::Paused => player.play(),
@@ -1118,7 +1123,7 @@ fn database_path() -> Result<PathBuf, String> {
     Ok(directory.join("library.sqlite3"))
 }
 
-fn format_duration(track: &TrackMetadata) -> String {
+pub(crate) fn format_duration(track: &TrackMetadata) -> String {
     let seconds = track.duration.map_or(0, |duration| duration.as_secs());
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }

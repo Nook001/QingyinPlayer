@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 icu_collator.workspace = true
 pinyin.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

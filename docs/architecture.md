@@ -81,4 +81,6 @@ qingyin/
 
 Rust 负责逻辑，QML 只负责 UI；成熟组件负责播放和解码；自己重点做好中文曲库、搜索、排序和极简体验。
 
+运行时模块依赖、数据流、播放后端与 SQLite schema 见仓库根目录 [README.md](../README.md)。本文保留产品边界与桥接决策。
+
 桥接决策：使用 `qmetaobject` 由 Rust 直接导出 `QObject`、属性、信号和方法给 QML；不采用 CXX-Qt，也不在项目中维护手写 C++ 桥接层。

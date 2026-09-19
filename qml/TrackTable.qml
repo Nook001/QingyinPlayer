@@ -65,8 +65,7 @@ Item {
                 Layout.preferredWidth: 190
                 Layout.preferredHeight: 28
                 enabled: root.sortable
-                onClicked: if (root.sortable)
-                onClicked: root.trackModel.set_sort("album")
+                onClicked: if (root.sortable) root.trackModel.set_sort("album")
 
                 contentItem: Text {
                     text: root.heading("专辑", "album")
@@ -87,8 +86,7 @@ Item {
                 Layout.preferredWidth: 48
                 Layout.preferredHeight: 28
                 enabled: root.sortable
-                onClicked: if (root.sortable)
-                onClicked: root.trackModel.set_sort("duration")
+                onClicked: if (root.sortable) root.trackModel.set_sort("duration")
 
                 contentItem: Text {
                     text: root.heading("时长", "duration")

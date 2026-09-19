@@ -15,9 +15,11 @@ pub struct TrackMetadata {
     pub album: Option<String>,
     pub artists: Vec<String>,
     pub duration: Option<Duration>,
+    /// Optional tagged sort values (`TITLESORT` / `TSOT`, etc.). Empty means derive from display.
     pub title_sort: Option<String>,
     pub album_sort: Option<String>,
     pub artist_sort: Option<String>,
+    /// Precomputed collation keys from display names and optional sort tags.
     pub title_key: String,
     pub album_key: String,
     pub artist_key: String,

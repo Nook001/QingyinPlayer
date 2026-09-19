@@ -19,7 +19,11 @@ Item {
     Timer {
         id: searchDelay
         interval: 180
-        onTriggered: root.libraryModel.search_tracks(searchField.text)
+        repeat: false
+        onTriggered: {
+            if (searchField.text.trim() !== "")
+                root.libraryModel.search_tracks(searchField.text)
+        }
     }
 
     FolderDialog {

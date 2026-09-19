@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::sync::OnceLock;
 
 use icu_collator::options::{CollatorOptions, Strength};
@@ -97,22 +98,22 @@ pub fn contains_han(value: &str) -> bool {
 /// Equivalent to repeatedly applying `^[「『【《〈（\(\[\{｢]+` and deleting the matching
 /// closer. `「极地暗流」 - Narwhal` becomes `极地暗流 - Narwhal`, not `- Narwhal`.
 fn strip_prefix_brackets(text: &str) -> String {
-    let mut chars: Vec<char> = text.trim().chars().collect();
+    let mut chars: VecDeque<char> = text.trim().chars().collect();
     loop {
         while chars
-            .first()
+            .front()
             .is_some_and(|character| character.is_whitespace())
         {
-            chars.remove(0);
+            chars.pop_front();
         }
-        let Some(&open) = chars.first() else {
+        let Some(&open) = chars.front() else {
             break;
         };
         let Some(close) = matching_closer(open) else {
             break;
         };
-        chars.remove(0);
-        if let Some(index) = matching_close_index(&chars, open, close) {
+        chars.pop_front();
+        if let Some(index) = matching_close_index(chars.make_contiguous(), open, close) {
             chars.remove(index);
         }
     }
@@ -252,7 +253,13 @@ fn collator() -> Option<&'static CollatorBorrowed<'static>> {
         .get_or_init(|| {
             let mut options = CollatorOptions::default();
             options.strength = Some(Strength::Secondary);
-            Collator::try_new(CollatorPreferences::default(), options).ok()
+            match Collator::try_new(CollatorPreferences::default(), options) {
+                Ok(collator) => Some(collator),
+                Err(error) => {
+                    tracing::warn!(%error, "ICU collator initialization failed");
+                    None
+                }
+            }
         })
         .as_ref()
 }

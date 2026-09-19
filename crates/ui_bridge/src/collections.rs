@@ -83,7 +83,7 @@ impl QAbstractListModel for DetailTrackModel {
             TITLE_ROLE => QString::from(track.title.clone()).into(),
             ARTIST_ROLE => QString::from(track.artists.join("、")).into(),
             ALBUM_ROLE => QString::from(track.album.clone().unwrap_or_default()).into(),
-            DURATION_ROLE => QString::from(format_duration(track)).into(),
+            DURATION_ROLE => QString::from(crate::format_duration(track)).into(),
             PATH_ROLE => QString::from(track.path.to_string_lossy().into_owned()).into(),
             TRACK_COVER_ROLE => {
                 QString::from(self.cover_urls.get(row).cloned().unwrap_or_default()).into()
@@ -102,11 +102,6 @@ impl QAbstractListModel for DetailTrackModel {
             (TRACK_COVER_ROLE, "cover".into()),
         ])
     }
-}
-
-fn format_duration(track: &TrackMetadata) -> String {
-    let seconds = track.duration.map_or(0, |duration| duration.as_secs());
-    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 impl QAbstractListModel for CollectionModel {
