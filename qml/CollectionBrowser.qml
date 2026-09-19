@@ -123,16 +123,6 @@ Item {
             model: root.collectionModel
             boundsBehavior: Flickable.StopAtBounds
 
-            WheelHandler {
-                target: null
-                onWheel: function(event) {
-                    const maximumY = Math.max(0, collectionGrid.contentHeight - collectionGrid.height)
-                    collectionGrid.contentY = Math.max(0, Math.min(maximumY,
-                        collectionGrid.contentY - event.angleDelta.y * 0.75))
-                    event.accepted = true
-                }
-            }
-
             delegate: Item {
                 id: collectionCard
 
@@ -192,18 +182,21 @@ Item {
                     }
                 }
 
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
+                HoverHandler {
+                    id: cardHover
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.collectionOpened(collectionCard.index)
+                }
 
-                    Rectangle {
-                        anchors.fill: parent
-                        color: parent.containsMouse ? root.theme.hoverColor : "transparent"
-                        radius: 10
-                        z: -1
-                    }
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onTapped: root.collectionOpened(collectionCard.index)
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: cardHover.hovered ? root.theme.hoverColor : "transparent"
+                    radius: 10
+                    z: -1
                 }
             }
         }

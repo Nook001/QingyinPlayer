@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use qingyin_chinese::{compare_keys, sort_key};
-use qingyin_metadata::{MetadataError, TrackMetadata, read_track};
+use qingyin_metadata::{CoverArt, TrackMetadata, read_tagged_track};
 use qingyin_storage::{Database, StorageError};
 use thiserror::Error;
 
@@ -15,10 +15,25 @@ pub use watch::{LibraryWatcher, WatchSummary, watch_directories};
 
 pub const UNKNOWN_ARTIST: &str = "未知歌手";
 pub const UNKNOWN_ALBUM: &str = "未知专辑";
+const UPSERT_BATCH_SIZE: usize = 50;
 
 const AUDIO_EXTENSIONS: &[&str] = &[
     "aac", "aif", "aiff", "ape", "flac", "m4a", "mp3", "mp4", "mpc", "ogg", "opus", "spx", "wav",
     "wv",
+];
+
+const SKIPPED_DIRECTORIES: &[&str] = &[
+    "steamapps",
+    "compatdata",
+    "pfx",
+    "drive_c",
+    "dosdevices",
+    ".venv",
+    "venv",
+    "site-packages",
+    "node_modules",
+    ".git",
+    "__pycache__",
 ];
 
 #[derive(Debug, Error)]
@@ -55,6 +70,20 @@ pub struct ScanSummary {
     pub imported: usize,
     pub unchanged: usize,
     pub failed: Vec<ScanFailure>,
+}
+
+/// One file observed while scanning a music directory.
+#[derive(Debug)]
+pub enum ScanEvent<'a> {
+    Imported {
+        track: &'a TrackMetadata,
+        modified_at: i64,
+        cover: Option<CoverArt>,
+    },
+    Unchanged {
+        path: &'a Path,
+        modified_at: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,49 +147,41 @@ impl MusicLibrary {
 
     /// Recursively scans a directory and persists changed audio files.
     ///
-    /// Individual metadata failures are returned in [`ScanSummary`].
+    /// Individual metadata or storage failures are returned in [`ScanSummary`].
     ///
     /// # Errors
     ///
-    /// Returns [`LibraryError`] when the directory cannot be read or storage fails.
+    /// Returns [`LibraryError`] when the directory cannot be read.
     pub fn scan_directory(
         &mut self,
         database: &mut Database,
         directory: impl AsRef<Path>,
     ) -> Result<ScanSummary, LibraryError> {
-        let mut paths = Vec::new();
-        collect_audio_paths(directory.as_ref(), &mut paths)?;
-        paths.sort_unstable();
+        let _ = self;
+        scan_music_directory(database, directory, |_| {})
+    }
 
-        let mut summary = ScanSummary {
-            discovered: paths.len(),
-            ..ScanSummary::default()
-        };
-        for path in paths {
-            let modified_at = modified_at(&path)?;
-            if database.track_modified_at(&path)? == Some(modified_at) {
-                summary.unchanged += 1;
-                continue;
-            }
-
-            match read_track(&path) {
-                Ok(track) => {
-                    database.upsert_track(&track, modified_at)?;
-                    summary.imported += 1;
-                }
-                Err(error) => summary.failed.push(scan_failure(path, &error)),
-            }
-        }
-
-        self.sync_tracks(database)?;
-        Ok(summary)
+    /// Scans a directory and reports each imported or unchanged file to `on_event`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError`] when the directory cannot be read.
+    pub fn scan_directory_with(
+        &mut self,
+        database: &mut Database,
+        directory: impl AsRef<Path>,
+        on_event: impl FnMut(ScanEvent<'_>),
+    ) -> Result<ScanSummary, LibraryError> {
+        let _ = self;
+        scan_music_directory(database, directory, on_event)
     }
 
     /// Applies a single filesystem change under the watched music directories.
     ///
     /// Missing files and directories remove matching library rows. Existing audio is
     /// imported when its modification time changed. Temporary files, non-audio files,
-    /// and paths outside `watched_roots` are ignored.
+    /// and paths outside `watched_roots` are ignored. This does not reload the in-memory
+    /// track list; call [`Self::sync_from_database`] when that snapshot is needed.
     ///
     /// # Errors
     ///
@@ -171,99 +192,17 @@ impl MusicLibrary {
         path: impl AsRef<Path>,
         watched_roots: &[PathBuf],
     ) -> Result<LibraryChange, LibraryError> {
-        let path = path.as_ref();
-        if !is_watched_path(path, watched_roots) || is_temporary(path) {
-            return Ok(LibraryChange::Ignored);
-        }
-
-        match fs::metadata(path) {
-            Ok(metadata) if metadata.is_dir() => self.refresh_directory(database, path),
-            Ok(_) if is_supported_audio(path) => self.refresh_audio_file(database, path),
-            Ok(_) => {
-                if database.remove_track(path)? {
-                    self.sync_tracks(database)?;
-                    Ok(LibraryChange::Removed(1))
-                } else {
-                    Ok(LibraryChange::Ignored)
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                self.refresh_missing_path(database, path)
-            }
-            Err(error) => Err(LibraryError::Io {
-                path: path.to_path_buf(),
-                source: error,
-            }),
-        }
+        let _ = self;
+        refresh_watched_path(database, path, watched_roots)
     }
 
-    fn refresh_directory(
-        &mut self,
-        database: &mut Database,
-        directory: &Path,
-    ) -> Result<LibraryChange, LibraryError> {
-        match self.scan_directory(database, directory) {
-            Ok(summary) if summary.imported > 0 => Ok(LibraryChange::Upserted(summary.imported)),
-            Ok(summary) if !summary.failed.is_empty() && summary.unchanged == 0 => {
-                Ok(LibraryChange::Failed {
-                    path: directory.to_path_buf(),
-                    message: summary.failed[0].message.clone(),
-                })
-            }
-            Ok(_) => Ok(LibraryChange::Ignored),
-            Err(LibraryError::Io { .. }) => self.remove_missing_prefix(database, directory),
-            Err(error) => Err(error),
-        }
-    }
-
-    fn refresh_audio_file(
-        &mut self,
-        database: &mut Database,
-        path: &Path,
-    ) -> Result<LibraryChange, LibraryError> {
-        let modified_at = modified_at(path)?;
-        if database.track_modified_at(path)? == Some(modified_at) {
-            return Ok(LibraryChange::Ignored);
-        }
-        match read_track(path) {
-            Ok(track) => {
-                database.upsert_track(&track, modified_at)?;
-                self.sync_tracks(database)?;
-                Ok(LibraryChange::Upserted(1))
-            }
-            Err(error) => Ok(LibraryChange::Failed {
-                path: path.to_path_buf(),
-                message: error.to_string(),
-            }),
-        }
-    }
-
-    fn refresh_missing_path(
-        &mut self,
-        database: &mut Database,
-        path: &Path,
-    ) -> Result<LibraryChange, LibraryError> {
-        if is_supported_audio(path) {
-            if database.remove_track(path)? {
-                self.sync_tracks(database)?;
-                return Ok(LibraryChange::Removed(1));
-            }
-            return Ok(LibraryChange::Ignored);
-        }
-        self.remove_missing_prefix(database, path)
-    }
-
-    fn remove_missing_prefix(
-        &mut self,
-        database: &mut Database,
-        path: &Path,
-    ) -> Result<LibraryChange, LibraryError> {
-        let removed = database.remove_tracks_under(path)?;
-        if removed == 0 {
-            return Ok(LibraryChange::Ignored);
-        }
-        self.sync_tracks(database)?;
-        Ok(LibraryChange::Removed(removed))
+    /// Reloads the in-memory track list from SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError`] when storage cannot list tracks.
+    pub fn sync_from_database(&mut self, database: &Database) -> Result<(), LibraryError> {
+        self.sync_tracks(database)
     }
 
     fn sync_tracks(&mut self, database: &Database) -> Result<(), LibraryError> {
@@ -276,7 +215,198 @@ impl MusicLibrary {
     }
 }
 
+/// Applies a watched filesystem change without loading the full library into memory.
+///
+/// # Errors
+///
+/// Returns [`LibraryError`] when the path cannot be read or storage fails.
+pub fn refresh_watched_path(
+    database: &mut Database,
+    path: impl AsRef<Path>,
+    watched_roots: &[PathBuf],
+) -> Result<LibraryChange, LibraryError> {
+    let path = path.as_ref();
+    if !is_library_track(path, watched_roots) || is_temporary(path) {
+        return Ok(LibraryChange::Ignored);
+    }
+
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => refresh_directory(database, path),
+        Ok(_) if is_supported_audio(path) => refresh_audio_file(database, path),
+        Ok(_) => {
+            if database.remove_track(path)? {
+                Ok(LibraryChange::Removed(1))
+            } else {
+                Ok(LibraryChange::Ignored)
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => refresh_missing_path(database, path),
+        Err(error) => Err(LibraryError::Io {
+            path: path.to_path_buf(),
+            source: error,
+        }),
+    }
+}
+
+fn scan_music_directory(
+    database: &mut Database,
+    directory: impl AsRef<Path>,
+    mut on_event: impl FnMut(ScanEvent<'_>),
+) -> Result<ScanSummary, LibraryError> {
+    let mut paths = Vec::new();
+    collect_audio_paths(directory.as_ref(), &mut paths)?;
+    paths.sort_unstable();
+    import_audio_files(database, &paths, &mut on_event)
+}
+
+fn import_audio_files(
+    database: &mut Database,
+    paths: &[PathBuf],
+    on_event: &mut impl FnMut(ScanEvent<'_>),
+) -> Result<ScanSummary, LibraryError> {
+    let mut summary = ScanSummary {
+        discovered: paths.len(),
+        ..ScanSummary::default()
+    };
+    let mut pending = Vec::new();
+    for path in paths {
+        let modified_at = modified_at(path)?;
+        if database.track_modified_at(path)? == Some(modified_at) {
+            on_event(ScanEvent::Unchanged { path, modified_at });
+            summary.unchanged += 1;
+            continue;
+        }
+        match read_tagged_track(path) {
+            Ok((mut track, cover)) => {
+                track.modified_at = modified_at;
+                pending.push((track, modified_at, cover));
+                if pending.len() >= UPSERT_BATCH_SIZE {
+                    flush_pending(database, &mut pending, on_event, &mut summary);
+                }
+            }
+            Err(error) => summary
+                .failed
+                .push(scan_failure(path.clone(), error.to_string())),
+        }
+    }
+    flush_pending(database, &mut pending, on_event, &mut summary);
+    Ok(summary)
+}
+
+fn flush_pending(
+    database: &mut Database,
+    pending: &mut Vec<(TrackMetadata, i64, Option<CoverArt>)>,
+    on_event: &mut impl FnMut(ScanEvent<'_>),
+    summary: &mut ScanSummary,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let batch = pending
+        .iter()
+        .map(|(track, modified_at, _)| (track, *modified_at))
+        .collect::<Vec<_>>();
+    if database.upsert_tracks(&batch).is_ok() {
+        for (track, modified_at, cover) in pending.drain(..) {
+            on_event(ScanEvent::Imported {
+                track: &track,
+                modified_at,
+                cover,
+            });
+            summary.imported += 1;
+        }
+        return;
+    }
+    for (track, modified_at, cover) in pending.drain(..) {
+        match database.upsert_track(&track, modified_at) {
+            Ok(_) => {
+                on_event(ScanEvent::Imported {
+                    track: &track,
+                    modified_at,
+                    cover,
+                });
+                summary.imported += 1;
+            }
+            Err(error) => summary
+                .failed
+                .push(scan_failure(track.path.clone(), error.to_string())),
+        }
+    }
+}
+
+fn refresh_directory(
+    database: &mut Database,
+    directory: &Path,
+) -> Result<LibraryChange, LibraryError> {
+    match scan_music_directory(database, directory, |_| {}) {
+        Ok(summary) if summary.imported > 0 => Ok(LibraryChange::Upserted(summary.imported)),
+        Ok(summary) if !summary.failed.is_empty() && summary.unchanged == 0 => {
+            Ok(LibraryChange::Failed {
+                path: directory.to_path_buf(),
+                message: summary.failed[0].message.clone(),
+            })
+        }
+        Ok(_) => Ok(LibraryChange::Ignored),
+        Err(LibraryError::Io { .. }) => remove_missing_prefix(database, directory),
+        Err(error) => Err(error),
+    }
+}
+
+fn refresh_audio_file(database: &mut Database, path: &Path) -> Result<LibraryChange, LibraryError> {
+    let modified_at = modified_at(path)?;
+    if database.track_modified_at(path)? == Some(modified_at) {
+        return Ok(LibraryChange::Ignored);
+    }
+    match read_tagged_track(path) {
+        Ok((mut track, _cover)) => {
+            track.modified_at = modified_at;
+            database.upsert_track(&track, modified_at)?;
+            Ok(LibraryChange::Upserted(1))
+        }
+        Err(error) => Ok(LibraryChange::Failed {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        }),
+    }
+}
+
+fn refresh_missing_path(
+    database: &mut Database,
+    path: &Path,
+) -> Result<LibraryChange, LibraryError> {
+    if is_supported_audio(path) {
+        if database.remove_track(path)? {
+            return Ok(LibraryChange::Removed(1));
+        }
+        return Ok(LibraryChange::Ignored);
+    }
+    remove_missing_prefix(database, path)
+}
+
+fn remove_missing_prefix(
+    database: &mut Database,
+    path: &Path,
+) -> Result<LibraryChange, LibraryError> {
+    let removed = database.remove_tracks_under(path)?;
+    if removed == 0 {
+        return Ok(LibraryChange::Ignored);
+    }
+    Ok(LibraryChange::Removed(removed))
+}
+
 fn collect_audio_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), LibraryError> {
+    collect_audio_paths_inner(directory, paths, true)
+}
+
+fn collect_audio_paths_inner(
+    directory: &Path,
+    paths: &mut Vec<PathBuf>,
+    is_root: bool,
+) -> Result<(), LibraryError> {
+    if !is_root && is_skipped_scan_directory(directory) {
+        return Ok(());
+    }
+
     let entries = fs::read_dir(directory).map_err(|source| LibraryError::Io {
         path: directory.to_path_buf(),
         source,
@@ -293,7 +423,7 @@ fn collect_audio_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(),
             source,
         })?;
         if file_type.is_dir() {
-            collect_audio_paths(&path, paths)?;
+            collect_audio_paths_inner(&path, paths, false)?;
         } else if file_type.is_file() && is_supported_audio(&path) {
             paths.push(path);
         }
@@ -321,10 +451,65 @@ pub(crate) fn is_temporary(path: &Path) -> bool {
         })
 }
 
+/// Returns whether `path` is under a configured music root and not inside a skipped tree.
+#[must_use]
+pub fn is_library_track(path: &Path, roots: &[PathBuf]) -> bool {
+    is_watched_path(path, roots) && !is_excluded_library_path(path, roots)
+}
+
+/// Deletes stored tracks that are outside `roots` or sit in skipped vendor/runtime folders.
+///
+/// # Errors
+///
+/// Returns [`LibraryError`] when storage cannot list or delete tracks.
+pub fn prune_unwatched_tracks(
+    database: &Database,
+    roots: &[PathBuf],
+) -> Result<usize, LibraryError> {
+    let mut removed = 0;
+    for track in database.list_tracks()? {
+        if is_library_track(&track.metadata.path, roots) {
+            continue;
+        }
+        if database.remove_track(&track.metadata.path)? {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 pub(crate) fn is_watched_path(path: &Path, roots: &[PathBuf]) -> bool {
     roots
         .iter()
         .any(|root| path == root || path.starts_with(root))
+}
+
+fn is_excluded_library_path(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| {
+        if path == root {
+            return false;
+        }
+        path.strip_prefix(root).is_ok_and(|relative| {
+            relative.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(is_skipped_directory_name)
+            })
+        })
+    })
+}
+
+fn is_skipped_scan_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_skipped_directory_name)
+}
+
+fn is_skipped_directory_name(name: &str) -> bool {
+    SKIPPED_DIRECTORIES
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
 }
 
 fn modified_at(path: &Path) -> Result<i64, LibraryError> {
@@ -343,11 +528,8 @@ fn modified_at(path: &Path) -> Result<i64, LibraryError> {
     Ok(i64::try_from(timestamp).unwrap_or(i64::MAX))
 }
 
-fn scan_failure(path: PathBuf, error: &MetadataError) -> ScanFailure {
-    ScanFailure {
-        path,
-        message: error.to_string(),
-    }
+fn scan_failure(path: PathBuf, message: String) -> ScanFailure {
+    ScanFailure { path, message }
 }
 
 #[derive(Clone, Copy)]
@@ -639,6 +821,8 @@ mod tests {
             library.refresh_path(&mut database, &path, &roots).unwrap(),
             LibraryChange::Upserted(1)
         );
+        assert!(library.tracks().is_empty());
+        library.sync_from_database(&database).unwrap();
         assert_eq!(library.tracks().len(), 1);
         assert_eq!(
             library.refresh_path(&mut database, &path, &roots).unwrap(),
@@ -656,6 +840,7 @@ mod tests {
             library.refresh_path(&mut database, &path, &roots).unwrap(),
             LibraryChange::Removed(1)
         );
+        library.sync_from_database(&database).unwrap();
         assert!(library.tracks().is_empty());
         let _ = fs::remove_dir_all(&root);
     }
@@ -681,7 +866,101 @@ mod tests {
             library.refresh_path(&mut database, &album, &roots).unwrap(),
             LibraryChange::Removed(1)
         );
+        library.sync_from_database(&database).unwrap();
         assert!(library.tracks().is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_skips_proton_and_virtualenv_directories() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut library = MusicLibrary::default();
+        let root = temp_music_dir();
+        write_silence_wav(&root.join("keep.wav"));
+
+        let proton = root.join("steamapps/compatdata/1/pfx");
+        fs::create_dir_all(&proton).unwrap();
+        write_silence_wav(&proton.join("junk.wav"));
+
+        let venv = root.join(".venv/lib/site-packages");
+        fs::create_dir_all(&venv).unwrap();
+        write_silence_wav(&venv.join("also.wav"));
+
+        library.scan_directory(&mut database, &root).unwrap();
+        library.sync_from_database(&database).unwrap();
+        assert_eq!(library.tracks().len(), 1);
+        assert_eq!(library.tracks()[0].path.file_name().unwrap(), "keep.wav");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_path_ignores_audio_under_skipped_directories() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut library = MusicLibrary::default();
+        let root = temp_music_dir();
+        let proton = root.join("steamapps/compatdata/1/pfx");
+        fs::create_dir_all(&proton).unwrap();
+        let junk = proton.join("junk.wav");
+        write_silence_wav(&junk);
+        let roots = [root.clone()];
+
+        assert_eq!(
+            library.refresh_path(&mut database, &junk, &roots).unwrap(),
+            LibraryChange::Ignored
+        );
+        library.sync_from_database(&database).unwrap();
+        assert!(library.tracks().is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prune_removes_tracks_outside_roots_and_skipped_trees() {
+        let mut database = Database::open_in_memory().unwrap();
+        let root = temp_music_dir();
+        let keep = root.join("keep.wav");
+        write_silence_wav(&keep);
+        let mut library = MusicLibrary::default();
+        library.scan_directory(&mut database, &root).unwrap();
+
+        let outside = std::env::temp_dir().join(format!(
+            "qingyin-outside-{}-{}.wav",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        write_silence_wav(&outside);
+        database
+            .upsert_track(
+                &test_track("outside", None, Vec::new(), outside.to_str().unwrap()),
+                1,
+            )
+            .unwrap();
+        database
+            .upsert_track(
+                &test_track(
+                    "proton",
+                    None,
+                    Vec::new(),
+                    root.join("steamapps/compatdata/1/pfx/junk.wav")
+                        .to_str()
+                        .unwrap(),
+                ),
+                1,
+            )
+            .unwrap();
+        assert_eq!(database.list_tracks().unwrap().len(), 3);
+
+        assert_eq!(
+            prune_unwatched_tracks(&database, std::slice::from_ref(&root)).unwrap(),
+            2
+        );
+        library.sync_from_database(&database).unwrap();
+        assert_eq!(library.tracks().len(), 1);
+        assert_eq!(library.tracks()[0].path, keep);
+
+        let _ = fs::remove_file(&outside);
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -48,22 +48,22 @@
 - [`Database::open`](../crates/storage/src/lib.rs) 和 `Database::open_in_memory` 可建立
   SQLite 连接并执行初始迁移。
 - 已建立 `tracks`、`track_artists` 和分字段 `search_terms` 表。
-- 已启用外键约束，并将数据库 schema 版本设为 `3`；打开旧库时会重建搜索索引并补排序标签列。
-- 已实现事务式轨道 upsert、曲库列表、按路径删除、目录前缀删除和修改时间查询。
+- 已启用外键、WAL 与 `busy_timeout=5000`，并将数据库 schema 版本设为 `4`；打开旧库时会重建搜索索引、补排序标签列，并为 `search_terms` 建字段索引。
+- 已实现事务式轨道 upsert（可按批提交）、曲库列表、按路径删除、目录前缀删除和修改时间查询。
+- `list_tracks` / `search_tracks` 一次 JOIN 取回歌手，多歌手仍按 `position` 排序。
 - SQLite 边界会校验时长等整数转换，重复路径不会产生重复轨道。
 - 已有单元测试验证迁移、写入、更新、列表和删除。
 
 ### 元数据与曲库导入
 
-- [`read_track`](../crates/metadata/src/lib.rs) 使用 Lofty 读取标题、专辑、歌手、时长以及
-  `TITLESORT` / `ALBUMSORT` / `ARTISTSORT`。
-- [`read_cover`](../crates/metadata/src/lib.rs) 可读取首张内嵌封面；扫描线程将封面按内容哈希缓存到
-  XDG 缓存目录，Qt 模型只传递本地文件 URL。
+- [`read_tagged_track`](../crates/metadata/src/lib.rs) 一次 Lofty 打开同时读取标签、时长和首张内嵌封面。
+- 扫描导入用这次解析结果写封面缓存；冷启动只拼接已有 `file://` URL，缓存键为路径哈希 + mtime。
 - 缺失标题时回退到文件名；读取错误保留文件路径和稳定错误文本。
 - [`MusicLibrary`](../crates/library/src/lib.rs) 可递归扫描目录，组合 Metadata、Chinese 和 Storage。
 - 扫描支持按修改时间跳过未变化文件，并汇总导入、跳过和失败数量。
-- [`refresh_path`](../crates/library/src/lib.rs) 可对单路径增量导入、更新或删除，并忽略临时文件与监听目录之外的路径。
-- [`watch_directories`](../crates/library/src/watch.rs) 使用 `notify` 递归监听已保存目录，短延迟合并事件后在工作线程批量刷新。
+- [`refresh_path`](../crates/library/src/lib.rs) 可对单路径增量导入、更新或删除，并忽略临时文件与监听目录之外的路径；成功后不自动整表 `list_tracks`。
+- [`watch_directories`](../crates/library/src/watch.rs) 使用 `notify` 递归监听已保存目录，短延迟合并事件后在工作线程批量刷新；一批路径只让 UI 全表加载一次。
+- 全量扫描按最多 50 首一批提交事务，单曲失败记入摘要而不中止整批。
 - Storage 已提供按路径前缀删除目录下全部曲目，目录删除不必重扫父目录。
 - `/mnt/workspace/Music/` 的 218 个 FLAC 和 97 个 MP3 已完成真实验证：首次导入 315 首，
   再次扫描 315 首均判定未变化，0 失败、0 重复。
@@ -73,7 +73,8 @@
 - [`Player::initialize`](../crates/player/src/lib.rs) 可初始化 GStreamer 并创建 `playbin`。
 - [`PlaybackState`](../crates/player/src/lib.rs) 已定义 `Stopped`、`Paused` 和 `Playing`。
 - `Player` 可校验并加载本地文件，支持播放、暂停和停止，并可读取当前路径与状态。
-- `Player` 在 GStreamer Bus 上监听播放结束和异步错误；播放结束后可驱动下一首，错误可回传界面。
+- `Player` 在独立 `GLib` 主循环线程上用 Bus watch 接收 EOS、错误和状态变化，不再阻塞等待 `playbin` 状态，也不轮询 `timed_pop`。
+- 播放中由播放器按 250ms 推送进度；暂停后停止推送。播放结束后可驱动下一首，错误可回传界面。
 - 缺少格式插件时会给出具体元素名称，缺少 `autoaudiosink` 时尝试使用 `pipewiresink`。
 - 播放器析构时会将 GStreamer 元素切换到 `Null` 状态。
 - 已安装并验证 `gst-plugins-good` 与 `gst-plugins-base`：真实 FLAC、MP3 均可通过
@@ -89,7 +90,7 @@
   `play_next`。
 - 播放状态、错误、当前标题、歌手和封面已作为 Qt 属性绑定到播放栏。
 - GStreamer EOS 会自动播放列表中的下一首；到达列表末尾后停止。
-- Qt Bridge 已导出播放位置、总时长、seek 和音量控制，并由播放栏定时同步。
+- Qt Bridge 已导出播放位置、总时长、seek 和音量控制；进度由播放器推送到属性，播放栏只绑定，拖动 seek 时不被后台进度覆盖。
 - [`Main.qml`](../qml/Main.qml) 已使用无边框窗口，KDE 原生标题栏不再显示。
 - [`WindowControls.qml`](../qml/WindowControls.qml) 已实现窗口拖动、最小化、最大化/还原和关闭。
 - [`ResizeHandle.qml`](../qml/ResizeHandle.qml) 已通过系统级缩放 API 提供四边和四角缩放。

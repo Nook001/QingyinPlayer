@@ -47,51 +47,51 @@
 
 ## B. 播放热路径
 
-- [ ] **Q-10** 中 · 去掉 `playbin.state(3s)` 对调用线程的阻塞等待  
+- [x] **Q-10** 中 · 去掉 `playbin.state(3s)` 对调用线程的阻塞等待  
   完成：`load` / `play` / `pause` 不再在 Qt 主线程空等最多 3 秒；状态靠 Bus 的 `StateChanged` / `AsyncDone` 或错误回传。切歌、暂停、失败提示仍正确。
 
-- [ ] **Q-11** 中 · GStreamer Bus 改为 watch/回调，不再 250ms `timed_pop`  
+- [x] **Q-11** 中 · GStreamer Bus 改为 watch/回调，不再 250ms `timed_pop`  
   完成：EOS 与 Error 仍能回到 Qt 主线程；不再常驻轮询线程（或仅在 Playing 时工作）。
 
-- [ ] **Q-12** 中 · 播放进度由播放器推送，QML 不再 250ms 拉取  
+- [x] **Q-12** 中 · 播放进度由播放器推送，QML 不再 250ms 拉取  
   完成：`PlayerBar` 去掉（或显著降低）轮询 Timer；拖动 seek 不被后台进度覆盖的现有行为保持。
 
-- [ ] **Q-13** 小 · 为 `ensure_format_plugins` 和 Bus 错误格式化补单测  
+- [x] **Q-13** 小 · 为 `ensure_format_plugins` 和 Bus 错误格式化补单测  
   完成：不依赖真实播放即可测缺插件列表与错误字符串。
 
 ---
 
 ## C. 解析与封面
 
-- [ ] **Q-14** 中 · 一次 Lofty 打开同时产出标签和封面  
+- [x] **Q-14** 中 · 一次 Lofty 打开同时产出标签和封面  
   完成：扫描/导入路径不再对同一文件 `read_from_path` 两次；无封面文件行为不变。
 
-- [ ] **Q-15** 中 · 封面缓存键改为路径 + mtime（或把哈希写入 SQLite）  
+- [x] **Q-15** 中 · 封面缓存键改为路径 + mtime（或把哈希写入 SQLite）  
   完成：已有缓存时启动不必为了算哈希再解码内嵌图。
 
-- [ ] **Q-16** 中 · 冷启动只拼接已有 `file://` 封面 URL，缺文件再回源  
+- [x] **Q-16** 中 · 冷启动只拼接已有 `file://` 封面 URL，缺文件再回源  
   完成：`restore_session` 不再对全库调用 `read_cover`；监听增量仍可复用 URL。
 
 ---
 
 ## D. SQLite 与扫描
 
-- [ ] **Q-17** 小 · 打开数据库时 `journal_mode=WAL` 且 `busy_timeout=5000`  
+- [x] **Q-17** 小 · 打开数据库时 `journal_mode=WAL` 且 `busy_timeout=5000`  
   完成：新连接默认 WAL；监听与搜索并行不再轻易 `SQLITE_BUSY`。有迁移或打开测试。
 
-- [ ] **Q-18** 中 · `list_tracks` / `search_tracks` 一次 JOIN 取回歌手，去掉 N+1  
+- [x] **Q-18** 中 · `list_tracks` / `search_tracks` 一次 JOIN 取回歌手，去掉 N+1  
   完成：列出 N 首曲目不再额外 N 次 `artists_for_track`；多歌手顺序仍按 `position`。
 
-- [ ] **Q-19** 小 · 监听 worker 使用不 `sync_tracks` 的刷新入口  
+- [x] **Q-19** 小 · 监听 worker 使用不 `sync_tracks` 的刷新入口  
   完成：`refresh_path` 成功不再为 worker 整表 `list_tracks`；扫描器若仍需要内存列表则走显式同步。
 
-- [ ] **Q-20** 中 · 一批 debounce 路径处理完后，UI 只全表加载一次  
+- [x] **Q-20** 中 · 一批 debounce 路径处理完后，UI 只全表加载一次  
   完成：10 个文件变更不会触发 10 次 `list_tracks` + 封面扫描。
 
-- [ ] **Q-21** 小 · 为 `search_terms(field, normalized)` 等加索引  
+- [x] **Q-21** 小 · 为 `search_terms(field, normalized)` 等加索引  
   完成：`EXPLAIN` 或测试能证明搜索不再纯全表扫（在上 FTS 之前的过渡）。
 
-- [ ] **Q-22** 中 · 全量扫描按批提交事务（如 50 首，失败再拆单条）  
+- [x] **Q-22** 中 · 全量扫描按批提交事务（如 50 首，失败再拆单条）  
   完成：首次导入万级时不再每文件一次 commit；单曲失败仍不中止整批。
 
 ---

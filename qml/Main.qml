@@ -52,6 +52,12 @@ ApplicationWindow {
 
     Component.onCompleted: backend.restore_session()
 
+    onClosing: function(close) {
+        backend.shutdown()
+        close.accepted = true
+        Qt.quit()
+    }
+
     background: Rectangle {
         color: window.backgroundColor
         radius: window.cornerRadius

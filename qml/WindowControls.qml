@@ -102,7 +102,10 @@ Rectangle {
             Layout.preferredWidth: 44
             Layout.fillHeight: true
             text: "×"
-            onClicked: root.targetWindow.close()
+            onClicked: {
+                root.targetWindow.close()
+                Qt.quit()
+            }
             ToolTip.visible: hovered
             ToolTip.text: "关闭"
 

@@ -48,7 +48,6 @@ Module {
         Method { name: "toggle_playback" }
         Method { name: "play_previous" }
         Method { name: "play_next" }
-        Method { name: "refresh_playback_progress" }
         Method {
             name: "seek_to"
             Parameter { name: "position"; type: "long" }
@@ -89,6 +88,7 @@ Module {
             name: "play_album_track"
             Parameter { name: "row"; type: "int" }
         }
+        Method { name: "shutdown" }
     }
 
     Component {

@@ -6,10 +6,10 @@ use image::{ImageFormat, ImageReader, Limits};
 use qingyin_chinese::compare_keys;
 use qingyin_core::Settings;
 use qingyin_library::{
-    CollectionEntry, LibraryWatcher, MusicLibrary, WatchSummary, aggregate_albums,
-    aggregate_artists, watch_directories,
+    CollectionEntry, LibraryWatcher, MusicLibrary, ScanEvent, WatchSummary, aggregate_albums,
+    aggregate_artists, is_library_track, prune_unwatched_tracks, watch_directories,
 };
-use qingyin_metadata::{TrackMetadata, read_cover};
+use qingyin_metadata::{CoverArt, TrackMetadata, read_cover};
 use qingyin_player::{PlaybackState, Player, PlayerEvent};
 use qingyin_storage::Database;
 use qmetaobject::QUrl;
@@ -129,12 +129,17 @@ pub struct AppBridge {
                 self.scan_status_changed();
                 return;
             };
+            let path = normalize_music_directory(path);
             self.scanning = true;
             self.scanning_changed();
             self.scan_status = "正在扫描音乐文件…".into();
             self.scan_status_changed();
 
             let scan_path = path.clone();
+            let mut library_roots = self.settings.music_directories.clone();
+            if !library_roots.iter().any(|existing| existing == &scan_path) {
+                library_roots.push(scan_path.clone());
+            }
             let bridge = QPointer::from(&*self);
             let apply_result =
                 qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
@@ -159,7 +164,9 @@ pub struct AppBridge {
                     }
                 });
 
-            std::thread::spawn(move || apply_result(scan_music_directory(&scan_path)));
+            std::thread::spawn(move || {
+                apply_result(scan_music_directory(&scan_path, &library_roots));
+            });
         }
     ),
     play_track: qt_method!(
@@ -183,11 +190,6 @@ pub struct AppBridge {
     play_next: qt_method!(
         fn play_next(&mut self) {
             self.play_next_internal();
-        }
-    ),
-    refresh_playback_progress: qt_method!(
-        fn refresh_playback_progress(&mut self) {
-            self.refresh_playback_progress_internal();
         }
     ),
     seek_to: qt_method!(
@@ -259,9 +261,19 @@ pub struct AppBridge {
             self.play_from_list(tracks, covers, row);
         }
     ),
+    shutdown: qt_method!(
+        fn shutdown(&mut self) {
+            self.shutdown_internal();
+        }
+    ),
 }
 
 impl AppBridge {
+    fn shutdown_internal(&mut self) {
+        self.watcher = None;
+        self.player = None;
+    }
+
     fn ensure_player(&mut self) -> Result<(), String> {
         if self.player.is_some() {
             return Ok(());
@@ -380,23 +392,6 @@ impl AppBridge {
         }
     }
 
-    fn refresh_playback_progress_internal(&mut self) {
-        let Some(player) = self.player.as_ref() else {
-            return;
-        };
-        let position = duration_millis(player.position());
-        let duration = duration_millis(player.duration());
-        if position != self.playback_position
-            || (duration > 0 && duration != self.playback_duration)
-        {
-            self.playback_position = position;
-            if duration > 0 {
-                self.playback_duration = duration;
-            }
-            self.playback_progress_changed();
-        }
-    }
-
     fn seek_to_internal(&mut self, position: i64) {
         let Some(player) = self.player.as_mut() else {
             return;
@@ -471,7 +466,8 @@ impl AppBridge {
                 bridge.search_changed();
             });
 
-        std::thread::spawn(move || apply_result(search_database(&query)));
+        let roots = self.settings.music_directories.clone();
+        std::thread::spawn(move || apply_result(search_database(&query, &roots)));
     }
 
     fn clear_search_internal(&mut self) {
@@ -518,18 +514,38 @@ impl AppBridge {
         self.restored = true;
         self.settings = Settings::load_or_default();
         self.apply_settings_to_ui();
-        match load_stored_library() {
-            Ok(result) => self.apply_scan_result(result),
-            Err(error) => {
-                self.scan_status = error.into();
-                self.scan_status_changed();
-            }
-        }
+        self.scan_status = "正在恢复曲库…".into();
+        self.scan_status_changed();
+
+        let bridge = QPointer::from(&*self);
+        let apply_result =
+            qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
+                let Some(bridge) = bridge.as_pinned() else {
+                    return;
+                };
+                let mut bridge = bridge.borrow_mut();
+                match result {
+                    Ok(result) => bridge.apply_scan_result(result),
+                    Err(error) => {
+                        bridge.scan_status = error.into();
+                        bridge.scan_status_changed();
+                    }
+                }
+                let directories = bridge.settings.music_directories.clone();
+                if !directories.is_empty() {
+                    bridge.scan_directories(directories);
+                }
+                bridge.ensure_watcher();
+            });
         let directories = self.settings.music_directories.clone();
-        if !directories.is_empty() {
-            self.scan_directories(directories);
+        if let Err(error) = std::thread::Builder::new()
+            .name("qingyin-restore".into())
+            .spawn(move || apply_result(load_stored_library(&directories)))
+        {
+            warn!(%error, "failed to start library restore");
+            self.scan_status = "无法启动曲库恢复".into();
+            self.scan_status_changed();
         }
-        self.ensure_watcher();
     }
 
     fn apply_settings_to_ui(&mut self) {
@@ -585,6 +601,7 @@ impl AppBridge {
 
         match load_stored_tracks() {
             Ok(tracks) => {
+                let tracks = tracks_in_library(tracks, &self.settings.music_directories);
                 let cover_urls =
                     reuse_or_cache_covers(&self.library_tracks, &self.library_cover_urls, &tracks);
                 self.apply_scan_result(ScanResult {
@@ -685,7 +702,9 @@ impl AppBridge {
                     }
                 }
             });
-        std::thread::spawn(move || apply_result(scan_music_directories(&directories)));
+        std::thread::spawn(move || {
+            apply_result(scan_music_directories(&directories, &directories));
+        });
     }
 
     fn show_library_tracks(&mut self) {
@@ -745,6 +764,23 @@ impl AppBridge {
         match event {
             PlayerEvent::EndOfStream => self.play_next_internal(),
             PlayerEvent::Error(error) => self.set_playback_error(error),
+            PlayerEvent::Progress { position, duration } => {
+                self.apply_playback_progress(position, duration);
+            }
+        }
+    }
+
+    fn apply_playback_progress(&mut self, position: Duration, duration: Option<Duration>) {
+        let position = duration_millis(Some(position));
+        let duration = duration_millis(duration);
+        if position != self.playback_position
+            || (duration > 0 && duration != self.playback_duration)
+        {
+            self.playback_position = position;
+            if duration > 0 {
+                self.playback_duration = duration;
+            }
+            self.playback_progress_changed();
         }
     }
 
@@ -898,18 +934,28 @@ pub fn register_qml_types() {
     qml_register_type::<AppBridge>(cstr!("Qingyin"), 1, 0, cstr!("AppBridge"));
 }
 
-fn scan_music_directory(path: &Path) -> Result<ScanResult, String> {
-    scan_music_directories(&[path.to_path_buf()])
+fn scan_music_directory(path: &Path, library_roots: &[PathBuf]) -> Result<ScanResult, String> {
+    scan_music_directories(&[path.to_path_buf()], library_roots)
 }
 
-fn scan_music_directories(directories: &[PathBuf]) -> Result<ScanResult, String> {
+fn scan_music_directories(
+    directories: &[PathBuf],
+    library_roots: &[PathBuf],
+) -> Result<ScanResult, String> {
     let mut database = Database::open(database_path()?).map_err(|error| error.to_string())?;
     let mut library = MusicLibrary::default();
     let mut imported = 0;
     let mut unchanged = 0;
     let mut failed = 0;
     for directory in directories {
-        match library.scan_directory(&mut database, directory) {
+        match library.scan_directory_with(&mut database, directory, |event| match event {
+            ScanEvent::Imported {
+                track,
+                modified_at,
+                cover,
+            } => store_cached_cover(&track.path, modified_at, cover.as_ref()),
+            ScanEvent::Unchanged { path, modified_at } => ensure_cached_cover(path, modified_at),
+        }) {
             Ok(summary) => {
                 imported += summary.imported;
                 unchanged += summary.unchanged;
@@ -921,13 +967,9 @@ fn scan_music_directories(directories: &[PathBuf]) -> Result<ScanResult, String>
             }
         }
     }
-    let tracks = database
-        .list_tracks()
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(|track| track.metadata)
-        .collect::<Vec<_>>();
-    let cover_urls = cache_cover_urls(&tracks);
+    prune_unwatched_tracks(&database, library_roots).map_err(|error| error.to_string())?;
+    let tracks = listed_tracks(&database)?;
+    let cover_urls = existing_cover_urls(&tracks, false);
     Ok(ScanResult {
         tracks,
         cover_urls,
@@ -935,9 +977,11 @@ fn scan_music_directories(directories: &[PathBuf]) -> Result<ScanResult, String>
     })
 }
 
-fn load_stored_library() -> Result<ScanResult, String> {
-    let tracks = load_stored_tracks()?;
-    let cover_urls = cache_cover_urls(&tracks);
+fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, String> {
+    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+    prune_unwatched_tracks(&database, roots).map_err(|error| error.to_string())?;
+    let tracks = listed_tracks(&database)?;
+    let cover_urls = existing_cover_urls(&tracks, true);
     let status = if tracks.is_empty() {
         String::new()
     } else {
@@ -951,7 +995,10 @@ fn load_stored_library() -> Result<ScanResult, String> {
 }
 
 fn load_stored_tracks() -> Result<Vec<TrackMetadata>, String> {
-    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+    listed_tracks(&Database::open(database_path()?).map_err(|error| error.to_string())?)
+}
+
+fn listed_tracks(database: &Database) -> Result<Vec<TrackMetadata>, String> {
     database
         .list_tracks()
         .map_err(|error| error.to_string())
@@ -963,6 +1010,17 @@ fn load_stored_tracks() -> Result<Vec<TrackMetadata>, String> {
         })
 }
 
+fn tracks_in_library(tracks: Vec<TrackMetadata>, roots: &[PathBuf]) -> Vec<TrackMetadata> {
+    tracks
+        .into_iter()
+        .filter(|track| is_library_track(&track.path, roots))
+        .collect()
+}
+
+fn normalize_music_directory(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
+}
+
 fn reuse_or_cache_covers(
     previous_tracks: &[TrackMetadata],
     previous_covers: &[String],
@@ -971,17 +1029,22 @@ fn reuse_or_cache_covers(
     let mut previous = HashMap::new();
     for (track, cover) in previous_tracks.iter().zip(previous_covers) {
         if !cover.is_empty() {
-            previous.insert(track.path.clone(), cover.clone());
+            previous.insert(track.path.clone(), (track.modified_at, cover.clone()));
         }
     }
+    let directory = cache_directory();
     tracks
         .iter()
         .map(|track| {
-            previous.remove(&track.path).unwrap_or_else(|| {
-                cache_directory()
-                    .and_then(|directory| cache_cover(&directory, &track.path))
-                    .unwrap_or_default()
-            })
+            if let Some((modified_at, cover)) = previous.get(&track.path)
+                && *modified_at == track.modified_at
+            {
+                return cover.clone();
+            }
+            directory
+                .as_ref()
+                .and_then(|directory| resolve_cover_url(directory, track, true))
+                .unwrap_or_default()
         })
         .collect()
 }
@@ -1005,13 +1068,14 @@ fn format_music_folders(directories: &[PathBuf]) -> String {
         .join("\n")
 }
 
-fn search_database(query: &str) -> Result<SearchResult, String> {
+fn search_database(query: &str, roots: &[PathBuf]) -> Result<SearchResult, String> {
     let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
     let tracks = database
         .search_tracks(query, SEARCH_RESULT_LIMIT)
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|track| track.metadata)
+        .filter(|track| is_library_track(&track.path, roots))
         .collect();
     Ok(SearchResult { tracks })
 }
@@ -1049,29 +1113,91 @@ fn compare_tracks(left: &TrackMetadata, right: &TrackMetadata, column: &str) -> 
     }
 }
 
-fn cache_cover_urls(tracks: &[TrackMetadata]) -> Vec<String> {
+fn existing_cover_urls(tracks: &[TrackMetadata], read_source: bool) -> Vec<String> {
     let Some(directory) = cache_directory() else {
         return vec![String::new(); tracks.len()];
     };
-
     tracks
         .iter()
-        .map(|track| cache_cover(&directory, &track.path).unwrap_or_default())
+        .map(|track| resolve_cover_url(&directory, track, read_source).unwrap_or_default())
         .collect()
 }
 
-fn cache_cover(directory: &Path, track_path: &Path) -> Option<String> {
-    let cover = read_cover(track_path).ok()??;
-    let mut hasher = DefaultHasher::new();
-    hasher.write(&cover.data);
-    let path = directory.join(format!("{:016x}.png", hasher.finish()));
-    if !path.exists() {
-        let cached_cover = prepare_cached_cover(&cover.data)?;
-        if std::fs::write(&path, cached_cover).is_err() {
-            return None;
-        }
+fn resolve_cover_url(directory: &Path, track: &TrackMetadata, read_source: bool) -> Option<String> {
+    if let Some(url) = cached_cover_url(directory, &track.path, track.modified_at) {
+        return Some(url);
     }
-    url::Url::from_file_path(path).ok().map(Into::into)
+    if !read_source || cover_marked_missing(directory, &track.path, track.modified_at) {
+        return None;
+    }
+    ensure_cached_cover(&track.path, track.modified_at);
+    cached_cover_url(directory, &track.path, track.modified_at)
+}
+
+fn ensure_cached_cover(track_path: &Path, modified_at: i64) {
+    let Some(directory) = cache_directory() else {
+        return;
+    };
+    if cached_cover_url(&directory, track_path, modified_at).is_some()
+        || cover_marked_missing(&directory, track_path, modified_at)
+    {
+        return;
+    }
+    if let Ok(cover) = read_cover(track_path) {
+        store_cached_cover(track_path, modified_at, cover.as_ref());
+    }
+}
+
+fn store_cached_cover(track_path: &Path, modified_at: i64, cover: Option<&CoverArt>) {
+    let Some(directory) = cache_directory() else {
+        return;
+    };
+    let png = cover_cache_file(directory.as_path(), track_path, modified_at, "png");
+    let missing = cover_cache_file(directory.as_path(), track_path, modified_at, "missing");
+    if let Some(cover) = cover {
+        let _ = std::fs::remove_file(&missing);
+        if png.exists() {
+            return;
+        }
+        if let Some(bytes) = prepare_cached_cover(&cover.data) {
+            let _ = std::fs::write(&png, bytes);
+        }
+        return;
+    }
+    let _ = std::fs::remove_file(&png);
+    if !missing.exists() {
+        let _ = std::fs::write(&missing, []);
+    }
+}
+
+fn cached_cover_url(directory: &Path, track_path: &Path, modified_at: i64) -> Option<String> {
+    let path = cover_cache_file(directory, track_path, modified_at, "png");
+    path.exists()
+        .then(|| url::Url::from_file_path(path).ok().map(Into::into))
+        .flatten()
+}
+
+fn cover_marked_missing(directory: &Path, track_path: &Path, modified_at: i64) -> bool {
+    cover_cache_file(directory, track_path, modified_at, "missing").exists()
+}
+
+fn cover_cache_file(
+    directory: &Path,
+    track_path: &Path,
+    modified_at: i64,
+    extension: &str,
+) -> PathBuf {
+    directory.join(format!(
+        "{}.{}",
+        cover_cache_stem(track_path, modified_at),
+        extension
+    ))
+}
+
+fn cover_cache_stem(track_path: &Path, modified_at: i64) -> String {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(track_path.as_os_str().as_encoded_bytes());
+    format!("{:016x}-{modified_at}", hasher.finish())
 }
 
 fn prepare_cached_cover(data: &[u8]) -> Option<Vec<u8>> {
@@ -1229,6 +1355,17 @@ mod tests {
         let covers = reuse_or_cache_covers(&previous_tracks, &previous_covers, &tracks);
         assert_eq!(covers[0], "file:///cache/a.png");
         assert_eq!(covers.len(), 2);
+    }
+
+    #[test]
+    fn cover_cache_key_includes_path_and_mtime() {
+        let path = Path::new("/music/a.flac");
+        assert_eq!(cover_cache_stem(path, 1), cover_cache_stem(path, 1));
+        assert_ne!(cover_cache_stem(path, 1), cover_cache_stem(path, 2));
+        assert_ne!(
+            cover_cache_stem(path, 1),
+            cover_cache_stem(Path::new("/music/b.flac"), 1)
+        );
     }
 
     #[test]

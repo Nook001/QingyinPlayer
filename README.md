@@ -161,7 +161,7 @@ inotify 事件
   → 400ms 合并路径
   → 独立工作线程打开自己的 SQLite 连接
       → MusicLibrary::refresh_path（导入 / 更新 / 按路径或前缀删除）
-  → 主线程重新 list_tracks，复用未变路径的封面 URL
+  → 主线程重新 list_tracks 一次，复用未变路径+mtime 的封面 URL
 ```
 
 临时文件（`.part` / `.tmp` / `.temp`）和监听根目录之外的路径会被忽略。删除根路径 `/` 不会清空曲库。
@@ -176,9 +176,9 @@ inotify 事件
 ```
 QML 激活某一行
   → AppBridge 复制当前列表为 playback_tracks（与曲库筛选/排序解耦）
-  → 主线程 Player::load + play（playbin，URI 为本地文件）
-  → QML Timer 250ms 拉取 position
-  → 后台线程轮询 GStreamer Bus：EOS 自动下一首，Error 回传界面
+  → 主线程 Player::load + play（playbin，URI 为本地文件，不等待 preroll）
+  → Playing 时由播放器推送 position
+  → GLib Bus watch：EOS 自动下一首，Error 回传界面
 ```
 
 上一首/下一首作用在 `playback_tracks` 上，而不是尚未实现的可视队列。列表播完后停止。音量写入设置。
@@ -189,8 +189,8 @@ QML 激活某一行
 
 - 使用单一 `playbin`。若系统没有 `autoaudiosink`，尝试 `pipewiresink`。
 - `load` 校验普通文件、canonicalize、按扩展名检查 FLAC/MP3 相关插件，再把路径变成 URI。
-- `play` / `pause` 会等待 GStreamer 状态最多约 3 秒；`stop` 回到 `Null` 但保留当前路径。
-- `set_event_handler` 另起线程，每 250ms `timed_pop` Bus，转发 `Eos` 与 `Error`。
+- `play` / `pause` 发出状态请求后立即返回，不等待 pipeline preroll；后续失败经 Bus 回传。
+- Bus watch 挂在独立 `GLib` 主循环上；仅在 `Playing` 时推送进度，QML 不再轮询。
 - 析构时将 pipeline 置 `Null`，并停止 Bus 线程。
 
 播放会话状态（当前行、标题、封面 URL、错误文案）由 `AppBridge` 持有，不在 `Player` 内。
@@ -198,16 +198,16 @@ QML 激活某一行
 ### 文件扫描（`crates/library`）
 
 - 支持扩展名：`aac` `aif` `aiff` `ape` `flac` `m4a` `mp3` `mp4` `mpc` `ogg` `opus` `spx` `wav` `wv`（大小写不敏感）。
-- `scan_directory`：DFS 收集路径，按路径排序后逐个处理；`modified_at` 为 Unix 秒。
-- `refresh_path`：目录走扫描或前缀删除；音频文件走单曲 upsert；非音频且已入库则删除该行。
-- 每次成功变更后 `sync_tracks()` 会 **整表** `list_tracks` 写回 `MusicLibrary` 的内存向量。监听批量里若连续多条变更，会多次全表加载。
+- `scan_directory`：DFS 收集路径，按路径排序后逐个处理；`modified_at` 为 Unix 秒；导入按最多 50 首一批提交。
+- `refresh_path`：目录走扫描或前缀删除；音频文件走单曲 upsert；非音频且已入库则删除该行。不自动 `sync_tracks`。
+- 监听 worker 只写 SQLite；需要内存列表时显式 `sync_from_database`。一批 debounce 路径对应 UI 一次全表加载。
 - 歌手/专辑聚合在内存完成：一首歌多个歌手会进入多个歌手组；无歌手/无专辑归入「未知歌手」「未知专辑」，并排在列表末尾。
 
 ### 存储（`crates/storage`）
 
 路径：`$XDG_DATA_HOME/qingyin/library.sqlite3`（通常为 `~/.local/share/qingyin/library.sqlite3`）。
 
-当前 `PRAGMA user_version = 3`。打开时启用外键；v1→v2 重建分字段 `search_terms`；v2→v3 增加可空排序标签列。
+当前 `PRAGMA user_version = 4`。打开时启用 WAL、`busy_timeout=5000` 和外键；v1→v2 重建分字段 `search_terms`；v2→v3 增加可空排序标签列；v3→v4 为 `search_terms(field, normalized|full_pinyin|initials)` 建索引。
 
 **`tracks`**
 
@@ -238,7 +238,7 @@ QML 激活某一行
 
 界面排序**不**走 SQL `ORDER BY` 拼音。`list_tracks` 仅按 `title, path` 取数，拼音序在内存里排。
 
-封面不入库：扫描时把内嵌图画缩到最长边 512、写成 PNG，文件名是内容哈希，目录为 `~/.cache/qingyin/covers/`。模型只暴露 `file://` URL。
+封面不入库：扫描导入时一次 Lofty 打开同时出标签和封面，缩到最长边 512 写成 PNG。缓存文件名为路径哈希 + mtime。冷启动只拼接已有 `file://` URL；缺缓存时在扫描未变化文件上再回源。模型只暴露 URL。
 
 ### 中文层（`crates/chinese`）
 

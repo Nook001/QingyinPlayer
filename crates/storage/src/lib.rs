@@ -11,6 +11,8 @@ pub type TrackId = i64;
 const SEARCH_FIELD_TITLE: &str = "title";
 const SEARCH_FIELD_ARTIST: &str = "artist";
 const SEARCH_FIELD_ALBUM: &str = "album";
+const SCHEMA_VERSION: u32 = 4;
+const BUSY_TIMEOUT_MS: u32 = 5000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredTrack {
@@ -43,6 +45,7 @@ impl Database {
     /// Returns [`StorageError`] when SQLite cannot open or migrate the database.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let connection = Connection::open(path)?;
+        configure_connection(&connection)?;
         let database = Self { connection };
         database.migrate()?;
         Ok(database)
@@ -55,6 +58,7 @@ impl Database {
     /// Returns [`StorageError`] when SQLite cannot initialize the database.
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let connection = Connection::open_in_memory()?;
+        configure_connection(&connection)?;
         let database = Self { connection };
         database.migrate()?;
         Ok(database)
@@ -70,63 +74,27 @@ impl Database {
         track: &TrackMetadata,
         modified_at: i64,
     ) -> Result<TrackId, StorageError> {
-        let path = path_as_str(&track.path)?;
-        let duration_ms = track
-            .duration
-            .map(|duration| i64::try_from(duration.as_millis()))
-            .transpose()
-            .map_err(|_| StorageError::DurationOverflow)?;
         let transaction = self.connection.transaction()?;
-
-        transaction.execute(
-            "INSERT INTO tracks (
-                 path, title, album, duration_ms, modified_at,
-                 title_sort, album_sort, artist_sort
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(path) DO UPDATE SET
-                 title = excluded.title,
-                 album = excluded.album,
-                 duration_ms = excluded.duration_ms,
-                 modified_at = excluded.modified_at,
-                 title_sort = excluded.title_sort,
-                 album_sort = excluded.album_sort,
-                 artist_sort = excluded.artist_sort",
-            params![
-                path,
-                track.title,
-                track.album,
-                duration_ms,
-                modified_at,
-                track.title_sort,
-                track.album_sort,
-                track.artist_sort
-            ],
-        )?;
-        let track_id =
-            transaction.query_row("SELECT id FROM tracks WHERE path = ?1", [path], |row| {
-                row.get(0)
-            })?;
-
-        transaction.execute("DELETE FROM track_artists WHERE track_id = ?1", [track_id])?;
-        for (position, artist) in track.artists.iter().enumerate() {
-            let position =
-                i64::try_from(position).map_err(|_| StorageError::ArtistPositionOverflow)?;
-            transaction.execute(
-                "INSERT INTO track_artists (track_id, artist, position) VALUES (?1, ?2, ?3)",
-                params![track_id, artist, position],
-            )?;
-        }
-        replace_search_terms(
-            &transaction,
-            track_id,
-            &track.title,
-            &track.artists,
-            track.album.as_deref(),
-        )?;
+        let track_id = upsert_track_on(&transaction, track, modified_at)?;
         transaction.commit()?;
-
         Ok(track_id)
+    }
+
+    /// Inserts or replaces many tracks in a single transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when data conversion or an SQLite operation fails.
+    pub fn upsert_tracks(&mut self, tracks: &[(&TrackMetadata, i64)]) -> Result<(), StorageError> {
+        if tracks.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.connection.transaction()?;
+        for (track, modified_at) in tracks {
+            upsert_track_on(&transaction, track, *modified_at)?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Returns every stored track ordered by title and path.
@@ -136,20 +104,14 @@ impl Database {
     /// Returns [`StorageError`] when SQLite cannot execute or decode the query.
     pub fn list_tracks(&self) -> Result<Vec<StoredTrack>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, path, title, album, duration_ms, title_sort, album_sort, artist_sort
+            "SELECT tracks.id, tracks.path, tracks.title, tracks.album, tracks.duration_ms,
+                    tracks.title_sort, tracks.album_sort, tracks.artist_sort, tracks.modified_at,
+                    track_artists.artist
              FROM tracks
-             ORDER BY title, path",
+             LEFT JOIN track_artists ON track_artists.track_id = tracks.id
+             ORDER BY tracks.title, tracks.path, track_artists.position",
         )?;
-        let rows = statement.query_map([], track_row)?;
-        let mut tracks = Vec::new();
-
-        for row in rows {
-            let row = row?;
-            let artists = self.artists_for_track(row.id)?;
-            tracks.push(stored_track(row, artists)?);
-        }
-
-        Ok(tracks)
+        collect_joined_tracks(statement.query_map([], joined_track_row)?)
     }
 
     /// Searches stored tracks by title, artist, or album.
@@ -172,24 +134,32 @@ impl Database {
         }
         let han_query = i64::from(contains_han(&query.normalized));
         let mut statement = self.connection.prepare(
-            "SELECT tracks.id, tracks.path, tracks.title, tracks.album, tracks.duration_ms,
-                    tracks.title_sort, tracks.album_sort, tracks.artist_sort,
-                    MIN(CASE search_terms.field
-                            WHEN 'title' THEN 0
-                            WHEN 'artist' THEN 1
-                            WHEN 'album' THEN 2
-                            ELSE 3
-                        END) AS match_rank
-             FROM tracks
-             JOIN search_terms ON search_terms.track_id = tracks.id
-             WHERE instr(search_terms.normalized, ?1) > 0
-                OR (?5 = 0 AND ?2 <> '' AND instr(search_terms.full_pinyin, ?2) > 0)
-                OR (?5 = 0 AND ?3 <> '' AND instr(search_terms.initials, ?3) > 0)
-             GROUP BY tracks.id
-             ORDER BY match_rank, tracks.title, tracks.path
-             LIMIT ?4",
+            "SELECT ranked.id, ranked.path, ranked.title, ranked.album, ranked.duration_ms,
+                    ranked.title_sort, ranked.album_sort, ranked.artist_sort, ranked.modified_at,
+                    track_artists.artist
+             FROM (
+                 SELECT tracks.id, tracks.path, tracks.title, tracks.album, tracks.duration_ms,
+                        tracks.title_sort, tracks.album_sort, tracks.artist_sort,
+                        tracks.modified_at,
+                        MIN(CASE search_terms.field
+                                WHEN 'title' THEN 0
+                                WHEN 'artist' THEN 1
+                                WHEN 'album' THEN 2
+                                ELSE 3
+                            END) AS match_rank
+                 FROM tracks
+                 JOIN search_terms ON search_terms.track_id = tracks.id
+                 WHERE instr(search_terms.normalized, ?1) > 0
+                    OR (?5 = 0 AND ?2 <> '' AND instr(search_terms.full_pinyin, ?2) > 0)
+                    OR (?5 = 0 AND ?3 <> '' AND instr(search_terms.initials, ?3) > 0)
+                 GROUP BY tracks.id
+                 ORDER BY match_rank, tracks.title, tracks.path
+                 LIMIT ?4
+             ) AS ranked
+             LEFT JOIN track_artists ON track_artists.track_id = ranked.id
+             ORDER BY ranked.match_rank, ranked.title, ranked.path, track_artists.position",
         )?;
-        let rows = statement.query_map(
+        collect_joined_tracks(statement.query_map(
             params![
                 query.normalized,
                 query.full_pinyin,
@@ -197,17 +167,8 @@ impl Database {
                 i64::try_from(limit).unwrap_or(i64::MAX),
                 han_query
             ],
-            track_row,
-        )?;
-        let mut tracks = Vec::new();
-
-        for row in rows {
-            let row = row?;
-            let artists = self.artists_for_track(row.id)?;
-            tracks.push(stored_track(row, artists)?);
-        }
-
-        Ok(tracks)
+            joined_track_row,
+        )?)
     }
 
     /// Removes a track by path and relies on foreign keys to remove related data.
@@ -321,6 +282,17 @@ impl Database {
             }
             self.connection.execute("PRAGMA user_version = 3", [])?;
         }
+        if version < SCHEMA_VERSION {
+            self.connection.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_search_terms_field_normalized
+                     ON search_terms(field, normalized);
+                 CREATE INDEX IF NOT EXISTS idx_search_terms_field_full_pinyin
+                     ON search_terms(field, full_pinyin);
+                 CREATE INDEX IF NOT EXISTS idx_search_terms_field_initials
+                     ON search_terms(field, initials);
+                 PRAGMA user_version = 4;",
+            )?;
+        }
         Ok(())
     }
 
@@ -374,19 +346,115 @@ struct TrackRow {
     title_sort: Option<String>,
     album_sort: Option<String>,
     artist_sort: Option<String>,
+    modified_at: i64,
 }
 
-fn track_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
-    Ok(TrackRow {
-        id: row.get(0)?,
-        path: row.get(1)?,
-        title: row.get(2)?,
-        album: row.get(3)?,
-        duration_ms: row.get(4)?,
-        title_sort: row.get(5)?,
-        album_sort: row.get(6)?,
-        artist_sort: row.get(7)?,
-    })
+fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
+    connection.busy_timeout(Duration::from_millis(u64::from(BUSY_TIMEOUT_MS)))?;
+    let _: String = connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    Ok(())
+}
+
+fn upsert_track_on(
+    connection: &Connection,
+    track: &TrackMetadata,
+    modified_at: i64,
+) -> Result<TrackId, StorageError> {
+    let path = path_as_str(&track.path)?;
+    let duration_ms = track
+        .duration
+        .map(|duration| i64::try_from(duration.as_millis()))
+        .transpose()
+        .map_err(|_| StorageError::DurationOverflow)?;
+
+    connection.execute(
+        "INSERT INTO tracks (
+             path, title, album, duration_ms, modified_at,
+             title_sort, album_sort, artist_sort
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(path) DO UPDATE SET
+             title = excluded.title,
+             album = excluded.album,
+             duration_ms = excluded.duration_ms,
+             modified_at = excluded.modified_at,
+             title_sort = excluded.title_sort,
+             album_sort = excluded.album_sort,
+             artist_sort = excluded.artist_sort",
+        params![
+            path,
+            track.title,
+            track.album,
+            duration_ms,
+            modified_at,
+            track.title_sort,
+            track.album_sort,
+            track.artist_sort
+        ],
+    )?;
+    let track_id =
+        connection.query_row("SELECT id FROM tracks WHERE path = ?1", [path], |row| {
+            row.get(0)
+        })?;
+
+    connection.execute("DELETE FROM track_artists WHERE track_id = ?1", [track_id])?;
+    for (position, artist) in track.artists.iter().enumerate() {
+        let position = i64::try_from(position).map_err(|_| StorageError::ArtistPositionOverflow)?;
+        connection.execute(
+            "INSERT INTO track_artists (track_id, artist, position) VALUES (?1, ?2, ?3)",
+            params![track_id, artist, position],
+        )?;
+    }
+    replace_search_terms(
+        connection,
+        track_id,
+        &track.title,
+        &track.artists,
+        track.album.as_deref(),
+    )?;
+    Ok(track_id)
+}
+
+fn joined_track_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(TrackRow, Option<String>)> {
+    Ok((
+        TrackRow {
+            id: row.get(0)?,
+            path: row.get(1)?,
+            title: row.get(2)?,
+            album: row.get(3)?,
+            duration_ms: row.get(4)?,
+            title_sort: row.get(5)?,
+            album_sort: row.get(6)?,
+            artist_sort: row.get(7)?,
+            modified_at: row.get(8)?,
+        },
+        row.get(9)?,
+    ))
+}
+
+fn collect_joined_tracks(
+    rows: rusqlite::MappedRows<
+        '_,
+        impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<(TrackRow, Option<String>)>,
+    >,
+) -> Result<Vec<StoredTrack>, StorageError> {
+    let mut tracks = Vec::<StoredTrack>::new();
+    for row in rows {
+        let (track_row, artist) = row?;
+        match tracks.last_mut() {
+            Some(track) if track.id == track_row.id => {
+                if let Some(artist) = artist {
+                    track.metadata.artists.push(artist);
+                }
+            }
+            _ => {
+                let artists = artist.into_iter().collect();
+                tracks.push(stored_track(track_row, artists)?);
+            }
+        }
+    }
+    Ok(tracks)
 }
 
 fn stored_track(row: TrackRow, artists: Vec<String>) -> Result<StoredTrack, StorageError> {
@@ -405,6 +473,7 @@ fn stored_track(row: TrackRow, artists: Vec<String>) -> Result<StoredTrack, Stor
         title_sort: row.title_sort,
         album_sort: row.album_sort,
         artist_sort: row.artist_sort,
+        modified_at: row.modified_at,
         title_key: String::new(),
         album_key: String::new(),
         artist_key: String::new(),
@@ -482,7 +551,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .expect("schema version should be readable");
 
-        assert_eq!(version, 3);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -507,6 +576,7 @@ mod tests {
 
         assert_eq!(first_id, second_id);
         assert_eq!(database.track_modified_at(&track.path).unwrap(), Some(2));
+        track.modified_at = 2;
         let tracks = database.list_tracks().expect("tracks should be listed");
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].metadata, track);
@@ -590,33 +660,37 @@ mod tests {
     #[test]
     fn searches_fields_separately_and_ranks_title_first() {
         let mut database = Database::open_in_memory().expect("in-memory database should open");
-        let title_hit = TrackMetadata::from_display(
+        let mut title_hit = TrackMetadata::from_display(
             "/music/qingyin.flac",
             "清音",
             Some("山水之间".into()),
             vec!["测试歌手".into()],
             Some(Duration::from_secs(42)),
         );
-        let album_hit = TrackMetadata::from_display(
+        let mut album_hit = TrackMetadata::from_display(
             "/music/other.flac",
             "夜色",
             Some("清音".into()),
             Vec::new(),
             None,
         );
-        let latin_track = TrackMetadata::from_display(
+        let mut latin_track = TrackMetadata::from_display(
             "/music/rain.flac",
             "Rain",
             Some("Wait".into()),
             vec!["Love".into()],
             None,
         );
-        let special_track =
+        let mut special_track =
             TrackMetadata::from_display("/music/breeze.flac", "清风 100%_", None, Vec::new(), None);
         database.upsert_track(&title_hit, 1).unwrap();
         database.upsert_track(&album_hit, 1).unwrap();
         database.upsert_track(&latin_track, 1).unwrap();
         database.upsert_track(&special_track, 1).unwrap();
+        title_hit.modified_at = 1;
+        album_hit.modified_at = 1;
+        latin_track.modified_at = 1;
+        special_track.modified_at = 1;
 
         for query in ["清音", "qingyin", "qy"] {
             let results = database.search_tracks(query, 10).unwrap();
@@ -694,7 +768,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, SCHEMA_VERSION);
         assert_eq!(database.search_tracks("爱", 10).unwrap().len(), 1);
         assert_eq!(
             database.search_tracks("rain", 10).unwrap()[0]
@@ -707,5 +781,72 @@ mod tests {
             database.search_tracks("爱", 10).unwrap()[0].metadata.title,
             "爱"
         );
+    }
+
+    #[test]
+    fn file_database_enables_wal_and_busy_timeout() {
+        let directory = std::env::temp_dir().join(format!(
+            "qingyin-storage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("library.sqlite3");
+        let database = Database::open(&path).expect("file database should open");
+        let mode: String = database
+            .connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        let timeout: i32 = database
+            .connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode.to_ascii_lowercase(), "wal");
+        assert_eq!(timeout, i32::try_from(BUSY_TIMEOUT_MS).unwrap());
+        drop(database);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn field_normalized_lookup_uses_search_index() {
+        let database = Database::open_in_memory().unwrap();
+        let mut statement = database
+            .connection
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT track_id FROM search_terms
+                 WHERE field = 'title' AND normalized = 'qingyin'",
+            )
+            .unwrap();
+        let plan = statement
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+        assert!(
+            plan.to_ascii_lowercase()
+                .contains("idx_search_terms_field_normalized"),
+            "plan was {plan}"
+        );
+    }
+
+    #[test]
+    fn upserts_a_batch_of_tracks_in_one_transaction() {
+        let mut database = Database::open_in_memory().unwrap();
+        let first = TrackMetadata::from_display("/music/a.flac", "A", None, Vec::new(), None);
+        let second = TrackMetadata::from_display("/music/b.flac", "B", None, Vec::new(), None);
+        database
+            .upsert_tracks(&[(&first, 1), (&second, 2)])
+            .unwrap();
+        let tracks = database.list_tracks().unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].metadata.title, "A");
+        assert_eq!(tracks[0].metadata.modified_at, 1);
+        assert_eq!(tracks[1].metadata.title, "B");
+        assert_eq!(tracks[1].metadata.modified_at, 2);
     }
 }

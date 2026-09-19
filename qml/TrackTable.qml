@@ -113,16 +113,6 @@ Item {
             spacing: 2
             boundsBehavior: Flickable.StopAtBounds
 
-            WheelHandler {
-                target: null
-                onWheel: function(event) {
-                    const maximumY = Math.max(0, trackList.contentHeight - trackList.height)
-                    trackList.contentY = Math.max(0, Math.min(maximumY,
-                        trackList.contentY - event.angleDelta.y * 0.75))
-                    event.accepted = true
-                }
-            }
-
             delegate: Rectangle {
                 id: trackRow
 
@@ -135,7 +125,7 @@ Item {
 
                 width: trackList.width
                 height: 58
-                color: rowMouseArea.containsMouse ? root.theme.hoverColor : "transparent"
+                color: rowHover.hovered ? root.theme.hoverColor : "transparent"
                 radius: 5
 
                 RowLayout {
@@ -208,11 +198,13 @@ Item {
                     }
                 }
 
-                MouseArea {
-                    id: rowMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onDoubleClicked: root.trackActivated(trackRow.index)
+                HoverHandler {
+                    id: rowHover
+                }
+
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onDoubleTapped: root.trackActivated(trackRow.index)
                 }
             }
         }

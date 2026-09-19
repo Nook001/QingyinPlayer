@@ -21,13 +21,6 @@ Rectangle {
         return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
     }
 
-    Timer {
-        interval: 250
-        running: root.playerBackend.current_title !== ""
-        repeat: true
-        onTriggered: root.playerBackend.refresh_playback_progress()
-    }
-
     Rectangle {
         anchors.left: parent.left
         width: root.cornerRadius

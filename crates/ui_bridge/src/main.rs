@@ -13,5 +13,6 @@ fn main() {
     let qml_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../qml/Main.qml");
     info!(qml_path, "loading QML application");
     engine.load_file(qml_path.into());
+    info!("QML loaded, entering event loop");
     engine.exec();
 }

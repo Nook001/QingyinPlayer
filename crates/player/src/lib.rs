@@ -1,11 +1,14 @@
+use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use thiserror::Error;
+
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -19,6 +22,10 @@ pub enum PlaybackState {
 pub enum PlayerEvent {
     EndOfStream,
     Error(String),
+    Progress {
+        position: Duration,
+        duration: Option<Duration>,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -44,6 +51,9 @@ pub enum PlayerError {
     #[error("GStreamer playbin does not provide an event bus")]
     MissingBus,
 
+    #[error("failed to watch the GStreamer bus")]
+    BusWatch,
+
     #[error("GStreamer state change failed: {0}")]
     StateChange(String),
 
@@ -59,10 +69,17 @@ pub struct Player {
     event_monitor: Option<EventMonitor>,
 }
 
-#[derive(Debug)]
 struct EventMonitor {
-    stop_requested: Arc<AtomicBool>,
+    main_loop: glib::MainLoop,
     thread: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for EventMonitor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EventMonitor")
+            .finish_non_exhaustive()
+    }
 }
 
 impl Player {
@@ -80,6 +97,10 @@ impl Player {
             && let Ok(audio_sink) = gst::ElementFactory::make("pipewiresink").build()
         {
             playbin.set_property("audio-sink", audio_sink);
+        }
+        if let Ok(video_sink) = gst::ElementFactory::make("fakesink").build() {
+            video_sink.set_property("sync", false);
+            playbin.set_property("video-sink", video_sink);
         }
 
         Ok(Self {
@@ -102,16 +123,12 @@ impl Player {
 
     #[must_use]
     pub fn position(&self) -> Option<Duration> {
-        self.playbin
-            .query_position::<gst::ClockTime>()
-            .map(|position| Duration::from_nanos(position.nseconds()))
+        query_clock(&self.playbin, QueryClock::Position)
     }
 
     #[must_use]
     pub fn duration(&self) -> Option<Duration> {
-        self.playbin
-            .query_duration::<gst::ClockTime>()
-            .map(|duration| Duration::from_nanos(duration.nseconds()))
+        query_clock(&self.playbin, QueryClock::Duration)
     }
 
     #[must_use]
@@ -136,38 +153,39 @@ impl Player {
             .map_err(|error| PlayerError::Seek(error.to_string()))
     }
 
-    /// Starts forwarding end-of-stream and playback errors to `handler`.
+    /// Starts forwarding bus events and playback progress to `handler`.
+    ///
+    /// End-of-stream, errors, and position updates are delivered from a `GLib` main
+    /// loop thread. Progress ticks run only while the pipeline is `Playing`.
     ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when the playback element has no event bus.
+    /// Returns [`PlayerError`] when the playback element has no event bus or the
+    /// watch cannot be attached.
     pub fn set_event_handler<F>(&mut self, handler: F) -> Result<(), PlayerError>
     where
         F: Fn(PlayerEvent) + Send + 'static,
     {
         self.event_monitor = None;
         let bus = self.playbin.bus().ok_or(PlayerError::MissingBus)?;
-        let stop_requested = Arc::new(AtomicBool::new(false));
-        let monitor_stop = Arc::clone(&stop_requested);
-        let thread = std::thread::spawn(move || {
-            while !monitor_stop.load(Ordering::Relaxed) {
-                let Some(message) = bus.timed_pop(Some(gst::ClockTime::from_mseconds(250))) else {
-                    continue;
-                };
-                match message.view() {
-                    gst::MessageView::Eos(_) => handler(PlayerEvent::EndOfStream),
-                    gst::MessageView::Error(error) => {
-                        handler(PlayerEvent::Error(format_bus_error(error)));
-                    }
-                    _ => {}
-                }
-            }
-        });
-        self.event_monitor = Some(EventMonitor {
-            stop_requested,
-            thread: Some(thread),
-        });
-        Ok(())
+        let playbin = self.playbin.clone();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let thread = std::thread::Builder::new()
+            .name("qingyin-gst-bus".into())
+            .spawn(move || {
+                run_bus_loop(bus, playbin, handler, ready_tx);
+            })
+            .map_err(|_| PlayerError::BusWatch)?;
+        if let Ok(Ok(main_loop)) = ready_rx.recv() {
+            self.event_monitor = Some(EventMonitor {
+                main_loop,
+                thread: Some(thread),
+            });
+            Ok(())
+        } else {
+            let _ = thread.join();
+            Err(PlayerError::BusWatch)
+        }
     }
 
     /// Loads a local audio file without starting playback.
@@ -201,6 +219,9 @@ impl Player {
     }
 
     /// Starts or resumes the loaded track.
+    ///
+    /// The pipeline may still be prerolling when this returns. Failures after that
+    /// arrive as [`PlayerEvent::Error`].
     ///
     /// # Errors
     ///
@@ -237,65 +258,187 @@ impl Player {
         self.playbin
             .set_state(state)
             .map(|_| ())
-            .map_err(|error| PlayerError::StateChange(error.to_string()))?;
-
-        if matches!(state, gst::State::Playing | gst::State::Paused) {
-            let (result, _, _) = self.playbin.state(Some(gst::ClockTime::from_seconds(3)));
-            result.map_err(|error| self.playback_error(error))?;
-        }
-        Ok(())
+            .map_err(|error| PlayerError::StateChange(error.to_string()))
     }
+}
 
-    fn playback_error(&self, state_error: gst::StateChangeError) -> PlayerError {
-        let Some(bus) = self.playbin.bus() else {
-            return PlayerError::StateChange(state_error.to_string());
-        };
-        let mut details = Vec::new();
+fn run_bus_loop<F>(
+    bus: gst::Bus,
+    playbin: gst::Element,
+    handler: F,
+    ready_tx: mpsc::SyncSender<Result<glib::MainLoop, ()>>,
+) where
+    F: Fn(PlayerEvent) + Send + 'static,
+{
+    let context = glib::MainContext::new();
+    let main_loop = glib::MainLoop::new(Some(&context), false);
+    let fail_tx = ready_tx.clone();
+    let loop_context = context.clone();
+    if context
+        .with_thread_default(move || {
+            let handler = BusHandler::new(handler);
+            let progress_source = Arc::new(Mutex::new(None::<glib::SourceId>));
+            let watch = bus.create_watch(Some("qingyin-gst-bus"), glib::Priority::DEFAULT, {
+                let playbin = playbin.clone();
+                let handler = Arc::clone(&handler);
+                let progress_source = Arc::clone(&progress_source);
+                let loop_context = loop_context.clone();
+                move |_, message| {
+                    handle_bus_message(
+                        &playbin,
+                        message,
+                        &handler,
+                        &progress_source,
+                        &loop_context,
+                    );
+                    glib::ControlFlow::Continue
+                }
+            });
+            let _watch_id = watch.attach(Some(&loop_context));
+            let _ = ready_tx.send(Ok(main_loop.clone()));
+            main_loop.run();
+            stop_progress(&progress_source);
+        })
+        .is_err()
+    {
+        let _ = fail_tx.send(Err(()));
+    }
+}
 
-        while let Some(message) = bus.pop() {
-            if message.has_name("missing-plugin") {
-                if let Some(structure) = message.structure() {
-                    details.push(format!("missing GStreamer plugin: {structure}"));
-                }
-            } else if let gst::MessageView::Error(error) = message.view() {
-                let mut message = error.error().to_string();
-                if let Some(debug) = error.debug() {
-                    message.push_str(": ");
-                    message.push_str(&debug);
-                }
-                details.push(message);
+fn handle_bus_message(
+    playbin: &gst::Element,
+    message: &gst::Message,
+    handler: &Arc<BusHandler>,
+    progress_source: &Mutex<Option<glib::SourceId>>,
+    context: &glib::MainContext,
+) {
+    match message.view() {
+        gst::MessageView::Eos(_) => handler.emit(PlayerEvent::EndOfStream),
+        gst::MessageView::Error(error) => {
+            handler.emit(PlayerEvent::Error(format_bus_error(error)));
+        }
+        gst::MessageView::StateChanged(changed) if is_playbin_message(playbin, message) => {
+            if changed.current() == gst::State::Playing {
+                emit_progress(playbin, handler);
+                start_progress(progress_source, context, playbin, handler);
+            } else {
+                stop_progress(progress_source);
             }
         }
-
-        if details.is_empty() {
-            PlayerError::StateChange(state_error.to_string())
-        } else {
-            PlayerError::StateChange(details.join("; "))
+        gst::MessageView::DurationChanged(_) if is_playbin_message(playbin, message) => {
+            emit_progress(playbin, handler);
         }
+        _ => {}
     }
+}
+
+fn start_progress(
+    progress_source: &Mutex<Option<glib::SourceId>>,
+    context: &glib::MainContext,
+    playbin: &gst::Element,
+    handler: &Arc<BusHandler>,
+) {
+    let mut slot = progress_source
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.is_some() {
+        return;
+    }
+    let playbin = playbin.clone();
+    let handler = Arc::clone(handler);
+    let source = glib::timeout_source_new(
+        PROGRESS_INTERVAL,
+        Some("qingyin-gst-progress"),
+        glib::Priority::DEFAULT,
+        move || {
+            emit_progress(&playbin, &handler);
+            glib::ControlFlow::Continue
+        },
+    );
+    *slot = Some(source.attach(Some(context)));
+}
+
+fn stop_progress(progress_source: &Mutex<Option<glib::SourceId>>) {
+    let mut slot = progress_source
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(source) = slot.take() {
+        source.remove();
+    }
+}
+
+fn emit_progress(playbin: &gst::Element, handler: &BusHandler) {
+    let Some(position) = query_clock(playbin, QueryClock::Position) else {
+        return;
+    };
+    handler.emit(PlayerEvent::Progress {
+        position,
+        duration: query_clock(playbin, QueryClock::Duration),
+    });
+}
+
+struct BusHandler {
+    inner: Mutex<Box<dyn Fn(PlayerEvent) + Send>>,
+}
+
+impl std::fmt::Debug for BusHandler {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("BusHandler").finish_non_exhaustive()
+    }
+}
+
+impl BusHandler {
+    fn new<F>(handler: F) -> Arc<Self>
+    where
+        F: Fn(PlayerEvent) + Send + 'static,
+    {
+        Arc::new(Self {
+            inner: Mutex::new(Box::new(handler)),
+        })
+    }
+
+    fn emit(&self, event: PlayerEvent) {
+        let handler = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        handler(event);
+    }
+}
+
+fn is_playbin_message(playbin: &gst::Element, message: &gst::Message) -> bool {
+    message
+        .src()
+        .is_some_and(|src| *src == *playbin.upcast_ref::<gst::Object>())
+}
+
+#[derive(Clone, Copy)]
+enum QueryClock {
+    Position,
+    Duration,
+}
+
+fn query_clock(playbin: &gst::Element, query: QueryClock) -> Option<Duration> {
+    let clock_time = match query {
+        QueryClock::Position => playbin.query_position::<gst::ClockTime>(),
+        QueryClock::Duration => playbin.query_duration::<gst::ClockTime>(),
+    }?;
+    Some(Duration::from_nanos(clock_time.nseconds()))
 }
 
 fn format_bus_error(error: &gst::message::Error) -> String {
-    let mut message = error.error().to_string();
-    if let Some(debug) = error.debug() {
-        message.push_str(": ");
-        message.push_str(&debug);
+    format_error_parts(&error.error().to_string(), error.debug().as_deref())
+}
+
+fn format_error_parts(error: &str, debug: Option<&str>) -> String {
+    match debug {
+        Some(debug) if !debug.is_empty() => format!("{error}: {debug}"),
+        _ => error.to_owned(),
     }
-    message
 }
 
 fn ensure_format_plugins(path: &Path) -> Result<(), PlayerError> {
-    let required = match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("flac") => &["flacparse", "flacdec"][..],
-        Some("mp3") => &["id3demux", "mpegaudioparse"][..],
-        _ => &[],
-    };
-    let missing = required
+    let missing = required_format_plugins(path)
         .iter()
         .filter(|plugin| gst::ElementFactory::find(plugin).is_none())
         .copied()
@@ -311,17 +454,91 @@ fn ensure_format_plugins(path: &Path) -> Result<(), PlayerError> {
     }
 }
 
+fn required_format_plugins(path: &Path) -> &'static [&'static str] {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("flac") => &["flacparse", "flacdec"],
+        Some("mp3") => &["id3demux", "mpegaudioparse"],
+        _ => &[],
+    }
+}
+
 impl Drop for Player {
     fn drop(&mut self) {
+        self.event_monitor = None;
         let _ = self.playbin.set_state(gst::State::Null);
     }
 }
 
 impl Drop for EventMonitor {
     fn drop(&mut self) {
-        self.stop_requested.store(true, Ordering::Relaxed);
+        self.main_loop.quit();
+        self.main_loop.context().wakeup();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_extensions_to_required_plugins() {
+        assert_eq!(
+            required_format_plugins(Path::new("/music/a.FLAC")),
+            ["flacparse", "flacdec"]
+        );
+        assert_eq!(
+            required_format_plugins(Path::new("track.mp3")),
+            ["id3demux", "mpegaudioparse"]
+        );
+        assert!(required_format_plugins(Path::new("track.wav")).is_empty());
+        assert!(required_format_plugins(Path::new("track")).is_empty());
+    }
+
+    #[test]
+    fn unnamed_formats_do_not_require_named_plugins() {
+        gst::init().expect("GStreamer should initialize in tests");
+        assert!(ensure_format_plugins(Path::new("track.ogg")).is_ok());
+        assert!(ensure_format_plugins(Path::new("track.wav")).is_ok());
+    }
+
+    #[test]
+    fn formats_bus_errors_with_optional_debug() {
+        assert_eq!(format_error_parts("decode failed", None), "decode failed");
+        assert_eq!(
+            format_error_parts("decode failed", Some("")),
+            "decode failed"
+        );
+        assert_eq!(
+            format_error_parts("decode failed", Some("no decoder")),
+            "decode failed: no decoder"
+        );
+    }
+
+    #[test]
+    fn missing_plugin_error_lists_element_names() {
+        let error = PlayerError::MissingPlugins {
+            path: PathBuf::from("/music/a.flac"),
+            plugins: "flacparse, flacdec".into(),
+        };
+        let message = error.to_string();
+        assert!(message.contains("flacparse"));
+        assert!(message.contains("/music/a.flac"));
+    }
+
+    #[test]
+    fn dropping_a_player_stops_the_bus_loop() {
+        let mut player = Player::initialize().expect("GStreamer should initialize");
+        player
+            .set_event_handler(|_| {})
+            .expect("bus loop should start");
+        drop(player);
     }
 }

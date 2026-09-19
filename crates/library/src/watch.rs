@@ -9,7 +9,7 @@ use notify::event::ModifyKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::warn;
 
-use crate::{LibraryChange, LibraryError, MusicLibrary};
+use crate::{LibraryChange, LibraryError, refresh_watched_path};
 use qingyin_storage::Database;
 
 const DEBOUNCE: Duration = Duration::from_millis(400);
@@ -170,9 +170,8 @@ fn apply_paths(database_path: &Path, roots: &[PathBuf], paths: &[PathBuf]) -> Wa
             return summary;
         }
     };
-    let mut library = MusicLibrary::default();
     for path in paths {
-        match library.refresh_path(&mut database, path, roots) {
+        match refresh_watched_path(&mut database, path, roots) {
             Ok(LibraryChange::Upserted(count)) => summary.upserted += count,
             Ok(LibraryChange::Removed(count)) => summary.removed += count,
             Ok(LibraryChange::Ignored) => {}
