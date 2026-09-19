@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
@@ -11,10 +10,6 @@ Item {
     required property bool darkMode
     required property string musicFolders
     signal themeRequested(bool dark)
-
-    ButtonGroup {
-        id: themeGroup
-    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -41,20 +36,47 @@ Item {
             font.weight: Font.DemiBold
         }
 
-        RadioButton {
-            text: "浅色"
-            checked: !root.darkMode
-            ButtonGroup.group: themeGroup
-            palette.buttonText: root.theme.textColor
-            onClicked: root.themeRequested(false)
-        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
 
-        RadioButton {
-            text: "深色"
-            checked: root.darkMode
-            ButtonGroup.group: themeGroup
-            palette.buttonText: root.theme.textColor
-            onClicked: root.themeRequested(true)
+            TapControl {
+                id: lightThemeButton
+                objectName: "lightThemeButton"
+
+                Layout.preferredWidth: 88
+                Layout.preferredHeight: 36
+                radius: 6
+                restFill: !root.darkMode ? root.theme.subtleColor : "transparent"
+                hoverFill: root.theme.hoverColor
+                onTapped: root.themeRequested(false)
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "浅色"
+                    color: root.theme.textColor
+                    font.pixelSize: 14
+                }
+            }
+
+            TapControl {
+                id: darkThemeButton
+                objectName: "darkThemeButton"
+
+                Layout.preferredWidth: 88
+                Layout.preferredHeight: 36
+                radius: 6
+                restFill: root.darkMode ? root.theme.subtleColor : "transparent"
+                hoverFill: root.theme.hoverColor
+                onTapped: root.themeRequested(true)
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "深色"
+                    color: root.theme.textColor
+                    font.pixelSize: 14
+                }
+            }
         }
 
         Text {

@@ -98,16 +98,16 @@
 
 ## E. 聚合与列表模型
 
-- [ ] **Q-23** 小 · 歌手/专辑分桶改 `HashMap`，去掉 `Vec::find`  
+- [x] **Q-23** 小 · 歌手/专辑分桶改 `HashMap`，去掉 `Vec::find`  
   完成：聚合结果与现测试一致，组查找不再随组数线性。
 
-- [ ] **Q-24** 中 · 聚合改为索引或 `Arc`，避免每组 `clone` 整份 `TrackMetadata`  
+- [x] **Q-24** 中 · 聚合改为索引或 `Arc`，避免每组 `clone` 整份 `TrackMetadata`  
   完成：多歌手曲目不再按组数深拷贝；QML 仍能打开详情并播放。
 
-- [ ] **Q-25** 中 · 歌手/专辑聚合移出 Qt 主线程  
+- [x] **Q-25** 中 · 歌手/专辑聚合移出 Qt 主线程  
   完成：`apply_scan_result` 不再同步 `aggregate_*` 卡 UI；模型更新仍在主线程。
 
-- [ ] **Q-26** 中 · 内存排序改 `layoutChanged`（或等价），不用 `begin_reset_model`  
+- [x] **Q-26** 中 · 内存排序改 `layoutChanged`（或等价），不用 `begin_reset_model`  
   完成：点表头排序尽量保持滚动位置，可见封面不全部重载。拼音序仍在 Rust 里比。
 
 ---

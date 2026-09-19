@@ -4,7 +4,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Qingyin 1.0
+import "pointer.js" as Pointer
 
+// Pointer policy: see qml/pointer.js.
+// Window chrome uses DragHandler and drops the Qt grab after handing the
+// gesture to the compositor. Lists are display-only; input is ViewInput.
 ApplicationWindow {
     id: window
 
@@ -20,6 +24,7 @@ ApplicationWindow {
     property int currentView: 0
     property bool sidebarCollapsed: false
     property bool darkTheme: backend.dark_theme
+    readonly property bool pointerDebug: backend.pointer_debug_enabled()
 
     readonly property real cornerRadius: visibility === Window.Maximized ? 0 : 10
     readonly property real resizeBorderWidth: 6
@@ -50,7 +55,22 @@ ApplicationWindow {
         id: backend
     }
 
-    Component.onCompleted: backend.restore_session()
+    Component.onCompleted: {
+        backend.restore_session()
+        Pointer.setDebug(window.pointerDebug, function(kind, target, extra) {
+            backend.log_pointer(kind, target, extra)
+        })
+        Pointer.setDropGrab(function() {
+            backend.drop_pointer_grabs()
+        })
+        if (window.pointerDebug)
+            Pointer.hookButtons(window.contentItem)
+    }
+
+    onActiveChanged: {
+        if (!window.active)
+            backend.drop_pointer_grabs()
+    }
 
     onClosing: function(close) {
         backend.shutdown()
@@ -103,28 +123,23 @@ ApplicationWindow {
                         font.weight: Font.DemiBold
                     }
 
-                    ToolButton {
+                    TapControl {
                         id: collapseButton
+                        objectName: "collapseSidebarButton"
 
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: 40
                         Layout.preferredHeight: 40
-                        text: window.sidebarCollapsed ? ">" : "<"
-                        onClicked: window.sidebarCollapsed = !window.sidebarCollapsed
-                        ToolTip.visible: hovered
-                        ToolTip.text: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
+                        radius: 5
+                        hoverFill: window.sidebarSelectedColor
+                        tooltip: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
+                        onTapped: window.sidebarCollapsed = !window.sidebarCollapsed
 
-                        contentItem: Text {
-                            text: collapseButton.text
+                        Text {
+                            anchors.centerIn: parent
+                            text: window.sidebarCollapsed ? ">" : "<"
                             color: window.sidebarTextColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
                             font.pixelSize: 19
-                        }
-
-                        background: Rectangle {
-                            color: collapseButton.hovered ? window.sidebarSelectedColor : "transparent"
-                            radius: 5
                         }
                     }
                 }
@@ -136,23 +151,24 @@ ApplicationWindow {
                         { label: "专辑", icon: "▣" }
                     ]
 
-                    delegate: Button {
+                    delegate: TapControl {
                         id: navigationButton
+                        objectName: "navigationButton-" + navigationButton.modelData.label
 
                         required property int index
                         required property var modelData
 
                         Layout.fillWidth: true
                         Layout.preferredHeight: 42
-                        text: navigationButton.modelData.label
-                        font.pixelSize: 14
-                        font.weight: window.currentView === navigationButton.index
-                            ? Font.DemiBold : Font.Normal
-                        onClicked: window.currentView = navigationButton.index
-                        ToolTip.visible: hovered && window.sidebarCollapsed
-                        ToolTip.text: navigationButton.text
+                        radius: 6
+                        restFill: window.currentView === navigationButton.index
+                            ? window.sidebarSelectedColor : "transparent"
+                        hoverFill: window.sidebarSelectedColor
+                        tooltip: window.sidebarCollapsed ? navigationButton.modelData.label : ""
+                        onTapped: window.currentView = navigationButton.index
 
-                        contentItem: RowLayout {
+                        RowLayout {
+                            anchors.fill: parent
                             spacing: 8
 
                             Text {
@@ -168,46 +184,46 @@ ApplicationWindow {
                             Text {
                                 Layout.fillWidth: true
                                 visible: !window.sidebarCollapsed
-                                text: navigationButton.text
+                                text: navigationButton.modelData.label
                                 color: window.currentView === navigationButton.index
                                     ? "#FFFFFF" : "#C5CEC9"
                                 elide: Text.ElideRight
-                                font: navigationButton.font
+                                font.pixelSize: 14
+                                font.weight: window.currentView === navigationButton.index
+                                    ? Font.DemiBold : Font.Normal
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
 
-                        background: Rectangle {
-                            color: window.currentView === navigationButton.index
-                                ? window.sidebarSelectedColor : "transparent"
-                            radius: 6
-
-                            Rectangle {
-                                width: 3
-                                height: 20
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: window.accentColor
-                                visible: window.currentView === navigationButton.index
-                                radius: 2
-                            }
+                        Rectangle {
+                            width: 3
+                            height: 20
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: window.accentColor
+                            visible: window.currentView === navigationButton.index
+                            radius: 2
                         }
                     }
                 }
 
                 Item { Layout.fillHeight: true }
 
-                Button {
+                TapControl {
                     id: settingsButton
+                    objectName: "settingsButton"
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
-                    text: "设置"
-                    onClicked: window.currentView = 3
-                    ToolTip.visible: hovered && window.sidebarCollapsed
-                    ToolTip.text: settingsButton.text
+                    radius: 6
+                    restFill: window.currentView === 3
+                        ? window.sidebarSelectedColor : "transparent"
+                    hoverFill: window.sidebarSelectedColor
+                    tooltip: window.sidebarCollapsed ? "设置" : ""
+                    onTapped: window.currentView = 3
 
-                    contentItem: RowLayout {
+                    RowLayout {
+                        anchors.fill: parent
                         spacing: 8
 
                         Text {
@@ -222,7 +238,7 @@ ApplicationWindow {
                         Text {
                             Layout.fillWidth: true
                             visible: !window.sidebarCollapsed
-                            text: settingsButton.text
+                            text: "设置"
                             color: window.currentView === 3 ? "#FFFFFF" : window.sidebarTextColor
                             font.pixelSize: 14
                             font.weight: window.currentView === 3 ? Font.DemiBold : Font.Normal
@@ -230,20 +246,14 @@ ApplicationWindow {
                         }
                     }
 
-                    background: Rectangle {
-                        color: window.currentView === 3
-                            ? window.sidebarSelectedColor : "transparent"
-                        radius: 6
-
-                        Rectangle {
-                            width: 3
-                            height: 20
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: window.accentColor
-                            visible: window.currentView === 3
-                            radius: 2
-                        }
+                    Rectangle {
+                        width: 3
+                        height: 20
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: window.accentColor
+                        visible: window.currentView === 3
+                        radius: 2
                     }
                 }
             }
@@ -268,18 +278,22 @@ ApplicationWindow {
                 currentIndex: window.currentView
 
                 Library {
+                    enabled: window.currentView === 0
                     theme: window
                     libraryModel: backend
                 }
                 Artist {
+                    enabled: window.currentView === 1
                     theme: window
                     libraryModel: backend
                 }
                 Album {
+                    enabled: window.currentView === 2
                     theme: window
                     libraryModel: backend
                 }
                 Settings {
+                    enabled: window.currentView === 3
                     theme: window
                     darkMode: backend.dark_theme
                     musicFolders: backend.music_folders

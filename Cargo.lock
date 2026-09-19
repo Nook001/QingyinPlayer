@@ -1074,6 +1074,7 @@ dependencies = [
 name = "qingyin-ui-bridge"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "cstr",
  "image",
  "qingyin-chinese",
@@ -1083,6 +1084,7 @@ dependencies = [
  "qingyin-player",
  "qingyin-storage",
  "qmetaobject",
+ "qttypes",
  "tracing",
  "tracing-subscriber",
  "url",

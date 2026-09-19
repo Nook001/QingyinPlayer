@@ -37,6 +37,14 @@ Module {
 
         Method { name: "application_name"; type: "QString" }
         Method { name: "version"; type: "QString" }
+        Method { name: "pointer_debug_enabled"; type: "bool" }
+        Method {
+            name: "log_pointer"
+            Parameter { name: "kind"; type: "QString" }
+            Parameter { name: "target"; type: "QString" }
+            Parameter { name: "extra"; type: "QString" }
+        }
+        Method { name: "drop_pointer_grabs" }
         Method {
             name: "add_library_folder"
             Parameter { name: "folder"; type: "QUrl" }

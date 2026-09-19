@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
@@ -97,14 +96,6 @@ Rectangle {
                 color: root.playerBackend.playback_error
                     ? root.theme.accentPressedColor : root.theme.mutedTextColor
                 font.pixelSize: 12
-                ToolTip.visible: truncated && mouseArea.containsMouse
-                ToolTip.text: text
-
-                MouseArea {
-                    id: mouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                }
             }
         }
     }
@@ -119,30 +110,36 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 8
 
-            ToolButton {
+            PlaybackButton {
+                objectName: "playPreviousButton"
                 text: "◀|"
-                enabled: root.playerBackend.current_title !== ""
-                onClicked: root.playerBackend.play_previous()
-                ToolTip.visible: hovered
-                ToolTip.text: "上一首"
+                tooltip: "上一首"
+                actionEnabled: root.playerBackend.current_title !== ""
+                textColor: root.theme.textColor
+                onTapped: root.playerBackend.play_previous()
             }
 
-            RoundButton {
+            PlaybackButton {
+                objectName: "togglePlaybackButton"
                 width: 46
                 height: 46
+                implicitWidth: 46
+                implicitHeight: 46
                 text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
-                enabled: root.playerBackend.current_title !== ""
-                onClicked: root.playerBackend.toggle_playback()
-                ToolTip.visible: hovered
-                ToolTip.text: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
+                tooltip: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
+                actionEnabled: root.playerBackend.current_title !== ""
+                textColor: root.theme.textColor
+                pixelSize: 18
+                onTapped: root.playerBackend.toggle_playback()
             }
 
-            ToolButton {
+            PlaybackButton {
+                objectName: "playNextButton"
                 text: "|▶"
-                enabled: root.playerBackend.current_title !== ""
-                onClicked: root.playerBackend.play_next()
-                ToolTip.visible: hovered
-                ToolTip.text: "下一首"
+                tooltip: "下一首"
+                actionEnabled: root.playerBackend.current_title !== ""
+                textColor: root.theme.textColor
+                onTapped: root.playerBackend.play_next()
             }
         }
 
@@ -152,33 +149,29 @@ Rectangle {
 
             Text {
                 Layout.preferredWidth: 38
-                text: root.formatTime(progressSlider.pressed
-                    ? progressSlider.dragPosition
+                text: root.formatTime(progressSlider.dragging
+                    ? progressSlider.dragValue
                     : root.playerBackend.playback_position)
                 color: root.theme.mutedTextColor
                 horizontalAlignment: Text.AlignRight
                 font.pixelSize: 11
             }
 
-            Slider {
+            PointerSlider {
                 id: progressSlider
-
-                property real dragPosition: 0
+                objectName: "progressSlider"
 
                 Layout.fillWidth: true
                 from: 0
                 to: Math.max(1, root.playerBackend.playback_duration)
-                value: pressed ? dragPosition : root.playerBackend.playback_position
-                enabled: root.playerBackend.current_title !== ""
+                value: root.playerBackend.playback_position
+                inputEnabled: root.playerBackend.current_title !== ""
                     && root.playerBackend.playback_duration > 0
-                onPressedChanged: {
-                    if (pressed) {
-                        dragPosition = root.playerBackend.playback_position
-                    } else {
-                        root.playerBackend.seek_to(Math.round(dragPosition))
-                    }
+                trackColor: root.theme.dividerColor
+                fillColor: root.theme.accentColor
+                onCommitted: function(v) {
+                    root.playerBackend.seek_to(Math.round(v))
                 }
-                onMoved: dragPosition = value
             }
 
             Text {
@@ -203,13 +196,17 @@ Rectangle {
             font.pixelSize: 15
         }
 
-        Slider {
+        PointerSlider {
+            objectName: "volumeSlider"
             Layout.fillWidth: true
             from: 0
             to: 1
             value: root.playerBackend.player_volume
-            enabled: root.playerBackend.current_title !== ""
-            onMoved: root.playerBackend.set_player_volume(value)
+            inputEnabled: root.playerBackend.current_title !== ""
+            trackColor: root.theme.dividerColor
+            fillColor: root.theme.accentColor
+            onDragged: function(v) { root.playerBackend.set_player_volume(v) }
+            onCommitted: function(v) { root.playerBackend.set_player_volume(v) }
         }
     }
 }

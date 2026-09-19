@@ -16,6 +16,11 @@ Item {
         && (root.libraryModel.searching
             || searchField.text.trim() !== String(root.libraryModel.search_query).trim())
 
+    onVisibleChanged: {
+        if (visible)
+            Qt.callLater(trackTable.clampScroll)
+    }
+
     Timer {
         id: searchDelay
         interval: 180
@@ -59,27 +64,26 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            Button {
+            TapControl {
                 id: addFolderButton
+                objectName: "addFolderButton"
 
-                text: "添加文件夹"
-                onClicked: folderDialog.open()
+                implicitWidth: 112
+                implicitHeight: 38
+                Layout.preferredWidth: 112
+                Layout.preferredHeight: 38
+                radius: 6
+                restFill: root.theme.accentColor
+                hoverFill: root.theme.accentColor
+                pressFill: root.theme.accentPressedColor
+                onTapped: folderDialog.open()
 
-                contentItem: Text {
-                    text: addFolderButton.text
+                Text {
+                    anchors.centerIn: parent
+                    text: "添加文件夹"
                     color: "#FFFFFF"
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 112
-                    implicitHeight: 38
-                    color: addFolderButton.down
-                        ? root.theme.accentPressedColor : root.theme.accentColor
-                    radius: 6
                 }
             }
         }
@@ -133,6 +137,8 @@ Item {
             theme: root.theme
             trackModel: root.libraryModel
             visible: count > 0 && !root.waitingForSearch
+            debugLabel: "library"
+            handlersEnabled: root.enabled && visible
             onTrackActivated: function(row) { root.libraryModel.play_track(row) }
         }
 

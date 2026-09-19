@@ -1,4 +1,5 @@
 mod collections;
+mod pointer_guard;
 
 use collections::{CollectionModel, DetailTrackModel};
 use cstr::cstr;
@@ -18,9 +19,11 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::fs::OpenOptions;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::warn;
 
@@ -40,6 +43,8 @@ const SEARCH_RESULT_LIMIT: usize = 500;
 struct ScanResult {
     tracks: Vec<TrackMetadata>,
     cover_urls: Vec<String>,
+    artists: Vec<CollectionEntry>,
+    albums: Vec<CollectionEntry>,
     status: String,
 }
 
@@ -86,6 +91,7 @@ pub struct AppBridge {
     settings: Settings,
     restored: bool,
     watcher: Option<LibraryWatcher>,
+    library_generation: u64,
     scanning: qt_property!(bool; NOTIFY scanning_changed),
     scanning_changed: qt_signal!(),
     scan_status: qt_property!(QString; NOTIFY scan_status_changed),
@@ -112,6 +118,27 @@ pub struct AppBridge {
         fn version(&self) -> QString {
             let _ = self;
             env!("CARGO_PKG_VERSION").into()
+        }
+    ),
+    pointer_debug_enabled: qt_method!(
+        fn pointer_debug_enabled(&self) -> bool {
+            let _ = self;
+            pointer_debug_from_env()
+        }
+    ),
+    log_pointer: qt_method!(
+        fn log_pointer(&self, kind: QString, target: QString, extra: QString) {
+            let _ = self;
+            let kind: String = kind.into();
+            let target: String = target.into();
+            let extra: String = extra.into();
+            pointer_trace(&kind, &format!("{target}  {extra}"));
+        }
+    ),
+    drop_pointer_grabs: qt_method!(
+        fn drop_pointer_grabs(&self) {
+            let _ = self;
+            pointer_guard::drop_after_gesture();
         }
     ),
     add_library_folder: qt_method!(
@@ -171,17 +198,21 @@ pub struct AppBridge {
     ),
     play_track: qt_method!(
         fn play_track(&mut self, row: i32) {
+            pointer_trace("slot", &format!("play_track row={row}"));
             self.play_from_list(self.tracks.clone(), self.cover_urls.clone(), row);
         }
     ),
     toggle_playback: qt_method!(
         fn toggle_playback(&mut self) {
+            pointer_trace("slot", "toggle_playback");
             self.toggle_playback_internal();
         }
     ),
     play_previous: qt_method!(
         fn play_previous(&mut self) {
+            pointer_trace("slot", "play_previous");
             let Some(current) = self.current_index else {
+                pointer_trace("slot", "play_previous skipped: no current track");
                 return;
             };
             self.play_queue_row(i32::try_from(previous_track_index(current)).unwrap_or(0));
@@ -189,6 +220,7 @@ pub struct AppBridge {
     ),
     play_next: qt_method!(
         fn play_next(&mut self) {
+            pointer_trace("slot", "play_next");
             self.play_next_internal();
         }
     ),
@@ -241,6 +273,7 @@ pub struct AppBridge {
     ),
     play_artist_track: qt_method!(
         fn play_artist_track(&mut self, row: i32) {
+            pointer_trace("slot", &format!("play_artist_track row={row}"));
             let (tracks, covers) = self.artist_detail.borrow().snapshot();
             self.play_from_list(tracks, covers, row);
         }
@@ -257,6 +290,7 @@ pub struct AppBridge {
     ),
     play_album_track: qt_method!(
         fn play_album_track(&mut self, row: i32) {
+            pointer_trace("slot", &format!("play_album_track row={row}"));
             let (tracks, covers) = self.album_detail.borrow().snapshot();
             self.play_from_list(tracks, covers, row);
         }
@@ -339,6 +373,7 @@ impl AppBridge {
         self.playback_duration = duration_millis(track.duration);
         self.playback_changed();
         self.playback_progress_changed();
+        pointer_guard::drop_after_playback();
     }
 
     fn toggle_playback_internal(&mut self) {
@@ -369,6 +404,7 @@ impl AppBridge {
         };
         self.playback_error = QString::default();
         self.playback_changed();
+        pointer_guard::drop_after_playback();
     }
 
     fn play_next_internal(&mut self) {
@@ -384,6 +420,7 @@ impl AppBridge {
                 self.playback_position = 0;
                 self.playback_changed();
                 self.playback_progress_changed();
+                pointer_guard::drop_after_playback();
             }
             return;
         };
@@ -508,6 +545,7 @@ impl AppBridge {
     }
 
     fn restore_session_internal(&mut self) {
+        pointer_guard::install();
         if self.restored {
             return;
         }
@@ -604,16 +642,28 @@ impl AppBridge {
                 let tracks = tracks_in_library(tracks, &self.settings.music_directories);
                 let cover_urls =
                     reuse_or_cache_covers(&self.library_tracks, &self.library_cover_urls, &tracks);
-                self.apply_scan_result(ScanResult {
-                    tracks,
-                    cover_urls,
-                    status: watch_status(summary),
+                let status = watch_status(summary);
+                self.library_generation = self.library_generation.wrapping_add(1);
+                let generation = self.library_generation;
+                let bridge = QPointer::from(&*self);
+                let apply_result = qmetaobject::queued_callback(move |result: ScanResult| {
+                    let Some(bridge) = bridge.as_pinned() else {
+                        return;
+                    };
+                    let mut bridge = bridge.borrow_mut();
+                    if bridge.library_generation != generation {
+                        return;
+                    }
+                    bridge.apply_scan_result(result);
+                    if !bridge.search_query.is_empty() {
+                        let query = bridge.search_query.clone();
+                        bridge.search_tracks_internal(&query);
+                    }
+                    bridge.skip_missing_current_track();
                 });
-                if !self.search_query.is_empty() {
-                    let query = self.search_query.clone();
-                    self.search_tracks_internal(&query);
-                }
-                self.skip_missing_current_track();
+                std::thread::spawn(move || {
+                    apply_result(scan_result_with_collections(tracks, cover_urls, status));
+                });
             }
             Err(error) => {
                 self.scan_status = error.into();
@@ -666,12 +716,13 @@ impl AppBridge {
     }
 
     fn apply_scan_result(&mut self, result: ScanResult) {
+        self.library_generation = self.library_generation.wrapping_add(1);
         self.library_tracks = result.tracks;
         self.library_cover_urls = result.cover_urls;
         if self.search_query.is_empty() {
             self.show_library_tracks();
         }
-        self.refresh_collections();
+        self.apply_collections(result.artists, result.albums);
         self.scan_status = result.status.into();
         self.scan_status_changed();
     }
@@ -746,9 +797,19 @@ impl AppBridge {
     }
 
     fn sort_visible_tracks(&mut self) {
-        let tracks = std::mem::take(&mut self.tracks);
-        let cover_urls = std::mem::take(&mut self.cover_urls);
-        self.replace_visible_tracks(tracks, cover_urls, true);
+        if self.tracks.is_empty() {
+            return;
+        }
+        sort_tracks(
+            &mut self.tracks,
+            &mut self.cover_urls,
+            &self.sort_column.to_string(),
+            self.sort_ascending,
+        );
+        let last = i32::try_from(self.tracks.len().saturating_sub(1)).unwrap_or(i32::MAX);
+        let top_left = self.row_index(0);
+        let bottom_right = self.row_index(last);
+        self.data_changed(top_left, bottom_right);
     }
 
     fn library_cover_for_path(&self, path: &Path) -> String {
@@ -784,17 +845,11 @@ impl AppBridge {
         }
     }
 
-    fn refresh_collections(&mut self) {
+    fn apply_collections(&mut self, artists: Vec<CollectionEntry>, albums: Vec<CollectionEntry>) {
         let selected_artist = self.selected_artist.to_string();
         let selected_album = self.selected_album.to_string();
-        self.artist_model.borrow_mut().reset(aggregate_artists(
-            &self.library_tracks,
-            &self.library_cover_urls,
-        ));
-        self.album_model.borrow_mut().reset(aggregate_albums(
-            &self.library_tracks,
-            &self.library_cover_urls,
-        ));
+        self.artist_model.borrow_mut().reset(artists);
+        self.album_model.borrow_mut().reset(albums);
         if selected_artist.is_empty() {
             self.close_artist_internal();
         } else {
@@ -885,6 +940,7 @@ impl AppBridge {
         self.playback_state = "stopped".into();
         self.playback_error = error.into();
         self.playback_changed();
+        pointer_guard::drop_after_playback();
     }
 }
 
@@ -934,6 +990,47 @@ pub fn register_qml_types() {
     qml_register_type::<AppBridge>(cstr!("Qingyin"), 1, 0, cstr!("AppBridge"));
 }
 
+fn pointer_log_path() -> &'static PathBuf {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| std::env::temp_dir().join("qingyin-pointer.log"))
+}
+
+fn pointer_debug_from_env() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let enabled = match std::env::var("QINGYIN_POINTER_DEBUG") {
+            Ok(value) => matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ),
+            Err(_) => false,
+        };
+        if enabled {
+            eprintln!("[qingyin-pointer] writing {}", pointer_log_path().display());
+        }
+        enabled
+    })
+}
+
+pub(crate) fn pointer_trace(kind: &str, detail: &str) {
+    if !pointer_debug_from_env() {
+        return;
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis();
+    let line = format!("[qingyin-pointer] {millis}  {kind}  {detail}");
+    eprintln!("{line}");
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(pointer_log_path())
+    {
+        let _ = std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
+    }
+}
+
 fn scan_music_directory(path: &Path, library_roots: &[PathBuf]) -> Result<ScanResult, String> {
     scan_music_directories(&[path.to_path_buf()], library_roots)
 }
@@ -970,11 +1067,11 @@ fn scan_music_directories(
     prune_unwatched_tracks(&database, library_roots).map_err(|error| error.to_string())?;
     let tracks = listed_tracks(&database)?;
     let cover_urls = existing_cover_urls(&tracks, false);
-    Ok(ScanResult {
+    Ok(scan_result_with_collections(
         tracks,
         cover_urls,
-        status: format!("扫描完成：导入 {imported} 首，跳过 {unchanged} 首，失败 {failed} 首"),
-    })
+        format!("扫描完成：导入 {imported} 首，跳过 {unchanged} 首，失败 {failed} 首"),
+    ))
 }
 
 fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, String> {
@@ -987,11 +1084,23 @@ fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, String> {
     } else {
         format!("已恢复 {} 首歌曲", tracks.len())
     };
-    Ok(ScanResult {
+    Ok(scan_result_with_collections(tracks, cover_urls, status))
+}
+
+fn scan_result_with_collections(
+    tracks: Vec<TrackMetadata>,
+    cover_urls: Vec<String>,
+    status: String,
+) -> ScanResult {
+    let artists = aggregate_artists(&tracks, &cover_urls);
+    let albums = aggregate_albums(&tracks, &cover_urls);
+    ScanResult {
         tracks,
         cover_urls,
+        artists,
+        albums,
         status,
-    })
+    }
 }
 
 fn load_stored_tracks() -> Result<Vec<TrackMetadata>, String> {

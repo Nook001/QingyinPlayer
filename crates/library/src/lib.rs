@@ -1,9 +1,11 @@
 mod watch;
 
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use qingyin_chinese::{compare_keys, sort_key};
@@ -92,7 +94,7 @@ pub struct CollectionEntry {
     pub subtitle: String,
     pub cover_url: String,
     pub track_count: usize,
-    pub tracks: Vec<TrackMetadata>,
+    pub tracks: Vec<Arc<TrackMetadata>>,
     pub cover_urls: Vec<String>,
 }
 
@@ -104,15 +106,21 @@ pub struct MusicLibrary {
 /// Groups tracks under each listed artist. Tracks without artists use [`UNKNOWN_ARTIST`].
 #[must_use]
 pub fn aggregate_artists(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<CollectionEntry> {
-    let mut groups = Vec::<(String, Vec<(TrackMetadata, String)>)>::new();
-    for (track, cover) in zip_tracks(tracks, cover_urls) {
-        let names = if track.artists.is_empty() {
-            vec![UNKNOWN_ARTIST.to_owned()]
-        } else {
-            track.artists.clone()
-        };
-        for name in names {
-            push_grouped_track(&mut groups, name, track.clone(), cover.clone());
+    let mut groups = HashMap::<String, Vec<(Arc<TrackMetadata>, String)>>::new();
+    for (index, track) in tracks.iter().enumerate() {
+        let cover = cover_url_at(cover_urls, index);
+        let shared = Arc::new(track.clone());
+        if track.artists.is_empty() {
+            push_grouped_track(&mut groups, UNKNOWN_ARTIST.to_owned(), shared, cover);
+            continue;
+        }
+        for name in &track.artists {
+            push_grouped_track(
+                &mut groups,
+                name.clone(),
+                Arc::clone(&shared),
+                cover.clone(),
+            );
         }
     }
     finish_collections(groups, CollectionKind::Artist)
@@ -121,8 +129,8 @@ pub fn aggregate_artists(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec
 /// Groups tracks by album title. Tracks without an album use [`UNKNOWN_ALBUM`].
 #[must_use]
 pub fn aggregate_albums(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<CollectionEntry> {
-    let mut groups = Vec::<(String, Vec<(TrackMetadata, String)>)>::new();
-    for (track, cover) in zip_tracks(tracks, cover_urls) {
+    let mut groups = HashMap::<String, Vec<(Arc<TrackMetadata>, String)>>::new();
+    for (index, track) in tracks.iter().enumerate() {
         let name = track
             .album
             .as_deref()
@@ -130,7 +138,12 @@ pub fn aggregate_albums(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<
             .filter(|value| !value.is_empty())
             .unwrap_or(UNKNOWN_ALBUM)
             .to_owned();
-        push_grouped_track(&mut groups, name, track, cover);
+        push_grouped_track(
+            &mut groups,
+            name,
+            Arc::new(track.clone()),
+            cover_url_at(cover_urls, index),
+        );
     }
     finish_collections(groups, CollectionKind::Album)
 }
@@ -538,30 +551,21 @@ enum CollectionKind {
     Album,
 }
 
-fn zip_tracks(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<(TrackMetadata, String)> {
-    tracks
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(index, track)| (track, cover_urls.get(index).cloned().unwrap_or_default()))
-        .collect()
+fn cover_url_at(cover_urls: &[String], index: usize) -> String {
+    cover_urls.get(index).cloned().unwrap_or_default()
 }
 
 fn push_grouped_track(
-    groups: &mut Vec<(String, Vec<(TrackMetadata, String)>)>,
+    groups: &mut HashMap<String, Vec<(Arc<TrackMetadata>, String)>>,
     name: String,
-    track: TrackMetadata,
+    track: Arc<TrackMetadata>,
     cover: String,
 ) {
-    if let Some((_, tracks)) = groups.iter_mut().find(|(existing, _)| existing == &name) {
-        tracks.push((track, cover));
-        return;
-    }
-    groups.push((name, vec![(track, cover)]));
+    groups.entry(name).or_default().push((track, cover));
 }
 
 fn finish_collections(
-    groups: Vec<(String, Vec<(TrackMetadata, String)>)>,
+    groups: HashMap<String, Vec<(Arc<TrackMetadata>, String)>>,
     kind: CollectionKind,
 ) -> Vec<CollectionEntry> {
     let mut groups = groups
@@ -599,7 +603,7 @@ fn finish_collections(
 
 fn collection_subtitle(
     name: &str,
-    tracks: &[(TrackMetadata, String)],
+    tracks: &[(Arc<TrackMetadata>, String)],
     kind: CollectionKind,
 ) -> String {
     match kind {
@@ -619,13 +623,15 @@ fn collection_subtitle(
     }
 }
 
-fn unique_artists(tracks: &[(TrackMetadata, String)]) -> Vec<String> {
+fn unique_artists(tracks: &[(Arc<TrackMetadata>, String)]) -> Vec<String> {
+    let mut seen = HashSet::new();
     let mut artists = Vec::new();
     for (track, _) in tracks {
         for artist in &track.artists {
-            if !artist.is_empty() && !artists.iter().any(|(existing, _)| existing == artist) {
-                artists.push((artist.clone(), sort_key(artist, None)));
+            if artist.is_empty() || !seen.insert(artist.as_str()) {
+                continue;
             }
+            artists.push((artist.clone(), sort_key(artist, None)));
         }
     }
     artists.sort_by(|left, right| compare_keys(&left.1, &right.1));
@@ -646,7 +652,7 @@ fn compare_collection_name(left: &str, left_key: &str, right: &str, right_key: &
 
 fn collection_name_key(
     name: &str,
-    tracks: &[(TrackMetadata, String)],
+    tracks: &[(Arc<TrackMetadata>, String)],
     kind: CollectionKind,
 ) -> String {
     sort_key(name, collection_sort_tag(name, tracks, kind))
@@ -654,7 +660,7 @@ fn collection_name_key(
 
 fn collection_sort_tag<'a>(
     name: &str,
-    tracks: &'a [(TrackMetadata, String)],
+    tracks: &'a [(Arc<TrackMetadata>, String)],
     kind: CollectionKind,
 ) -> Option<&'a str> {
     tracks.iter().find_map(|(track, _)| match kind {
@@ -775,6 +781,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Adele", "阿妹", "周杰伦"]
         );
+    }
+
+    #[test]
+    fn multi_artist_tracks_share_one_metadata_allocation() {
+        let tracks = vec![test_track(
+            "夜色",
+            Some("清音"),
+            vec!["乙歌手", "甲歌手"],
+            "/music/night.flac",
+        )];
+        let covers = vec!["night-cover".to_owned()];
+        let artists = aggregate_artists(&tracks, &covers);
+        assert_eq!(artists.len(), 2);
+        assert!(Arc::ptr_eq(&artists[0].tracks[0], &artists[1].tracks[0]));
     }
 
     #[test]

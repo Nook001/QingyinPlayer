@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use qingyin_library::CollectionEntry;
 use qingyin_metadata::TrackMetadata;
@@ -47,12 +48,12 @@ impl CollectionModel {
 #[derive(QObject, Default)]
 pub struct DetailTrackModel {
     base: qt_base_class!(trait QAbstractListModel),
-    tracks: Vec<TrackMetadata>,
+    tracks: Vec<Arc<TrackMetadata>>,
     cover_urls: Vec<String>,
 }
 
 impl DetailTrackModel {
-    pub fn reset(&mut self, tracks: Vec<TrackMetadata>, cover_urls: Vec<String>) {
+    pub fn reset(&mut self, tracks: Vec<Arc<TrackMetadata>>, cover_urls: Vec<String>) {
         self.begin_reset_model();
         self.tracks = tracks;
         self.cover_urls = cover_urls;
@@ -62,7 +63,13 @@ impl DetailTrackModel {
 
     #[must_use]
     pub fn snapshot(&self) -> (Vec<TrackMetadata>, Vec<String>) {
-        (self.tracks.clone(), self.cover_urls.clone())
+        (
+            self.tracks
+                .iter()
+                .map(|track| track.as_ref().clone())
+                .collect(),
+            self.cover_urls.clone(),
+        )
     }
 }
 

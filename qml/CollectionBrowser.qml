@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
+import "pointer.js" as Pointer
 
 Item {
     id: root
@@ -23,6 +23,16 @@ Item {
 
     readonly property bool showingDetail: root.selectedName !== ""
 
+    onVisibleChanged: {
+        if (visible)
+            Qt.callLater(function() { Pointer.resyncFlickable(collectionGrid) })
+    }
+
+    onShowingDetailChanged: {
+        if (root.showingDetail)
+            Qt.callLater(function() { detailTable.clampScroll() })
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 34
@@ -32,26 +42,23 @@ Item {
             Layout.fillWidth: true
             spacing: 12
 
-            Button {
+            TapControl {
                 id: backButton
+                objectName: "collectionBackButton"
 
                 visible: root.showingDetail
                 Layout.preferredWidth: 40
                 Layout.preferredHeight: 40
-                flat: true
-                onClicked: root.collectionClosed()
+                radius: 6
+                hoverFill: root.theme.hoverColor
+                tooltip: "返回"
+                onTapped: root.collectionClosed()
 
-                contentItem: Text {
+                Text {
+                    anchors.centerIn: parent
                     text: "‹"
                     color: root.theme.textColor
                     font.pixelSize: 28
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    color: backButton.hovered ? root.theme.hoverColor : "transparent"
-                    radius: 6
                 }
             }
 
@@ -111,103 +118,115 @@ Item {
             color: root.theme.dividerColor
         }
 
-        GridView {
-            id: collectionGrid
-
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !root.showingDetail && count > 0
+            visible: !root.showingDetail && collectionGrid.count > 0
             clip: true
-            cellWidth: 176
-            cellHeight: 232
-            model: root.collectionModel
-            boundsBehavior: Flickable.StopAtBounds
 
-            delegate: Item {
-                id: collectionCard
+            GridView {
+                id: collectionGrid
 
-                required property int index
-                required property string name
-                required property string subtitle
-                required property string cover
+                anchors.fill: parent
+                clip: true
+                cellWidth: 176
+                cellHeight: 232
+                model: root.collectionModel
+                boundsBehavior: Flickable.StopAtBounds
+                interactive: false
+                pixelAligned: true
+                maximumFlickVelocity: 0
 
-                width: collectionGrid.cellWidth
-                height: collectionGrid.cellHeight
+                delegate: Item {
+                    id: collectionCard
 
-                Column {
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    spacing: 8
+                    required property int index
+                    required property string name
+                    required property string subtitle
+                    required property string cover
+
+                    width: collectionGrid.cellWidth
+                    height: collectionGrid.cellHeight
 
                     Rectangle {
-                        width: parent.width
-                        height: parent.width
-                        color: root.theme.artworkColor
-                        radius: 8
-                        clip: true
+                        anchors.fill: parent
+                        color: gridInput.hoverRow === collectionCard.index
+                            ? root.theme.hoverColor : "transparent"
+                        radius: 10
+                    }
 
-                        Image {
-                            id: coverImage
-                            anchors.fill: parent
-                            source: collectionCard.cover
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            visible: status === Image.Ready
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 8
+
+                        Rectangle {
+                            width: parent.width
+                            height: parent.width
+                            color: root.theme.artworkColor
+                            radius: 8
+                            clip: true
+
+                            Image {
+                                id: coverImage
+                                anchors.fill: parent
+                                source: collectionCard.cover
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: status === Image.Ready
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "♫"
+                                color: root.theme.accentColor
+                                font.pixelSize: 28
+                                visible: coverImage.status !== Image.Ready
+                            }
                         }
 
                         Text {
-                            anchors.centerIn: parent
-                            text: "♫"
-                            color: root.theme.accentColor
-                            font.pixelSize: 28
-                            visible: coverImage.status !== Image.Ready
+                            width: parent.width
+                            text: collectionCard.name
+                            color: root.theme.textColor
+                            elide: Text.ElideRight
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: collectionCard.subtitle
+                            color: root.theme.mutedTextColor
+                            elide: Text.ElideRight
+                            font.pixelSize: 12
                         }
                     }
-
-                    Text {
-                        width: parent.width
-                        text: collectionCard.name
-                        color: root.theme.textColor
-                        elide: Text.ElideRight
-                        font.pixelSize: 14
-                        font.weight: Font.DemiBold
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: collectionCard.subtitle
-                        color: root.theme.mutedTextColor
-                        elide: Text.ElideRight
-                        font.pixelSize: 12
-                    }
                 }
+            }
 
-                HoverHandler {
-                    id: cardHover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    onTapped: root.collectionOpened(collectionCard.index)
-                }
-
-                Rectangle {
-                    anchors.fill: parent
-                    color: cardHover.hovered ? root.theme.hoverColor : "transparent"
-                    radius: 10
-                    z: -1
-                }
+            ViewInput {
+                id: gridInput
+                anchors.fill: parent
+                view: collectionGrid
+                inputActive: root.enabled && !root.showingDetail
+                debugLabel: "card-tap"
+                doubleActivate: false
+                onActivated: function(row) { root.collectionOpened(row) }
             }
         }
 
         TrackTable {
+            id: detailTable
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.showingDetail
+            enabled: visible
             theme: root.theme
             trackModel: root.detailModel
             sortable: false
+            debugLabel: "detail"
+            handlersEnabled: root.enabled && root.showingDetail
             onTrackActivated: function(row) { root.trackActivated(row) }
         }
 

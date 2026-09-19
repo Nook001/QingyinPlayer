@@ -1,8 +1,9 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
+import "pointer.js" as Pointer
 
 Rectangle {
     id: root
@@ -28,97 +29,98 @@ Rectangle {
         color: parent.color
     }
 
-    DragHandler {
-        target: null
-        acceptedButtons: Qt.LeftButton
-        onActiveChanged: {
-            if (active) {
-                root.targetWindow.startSystemMove()
+    Item {
+        id: moveArea
+
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: windowButtons.left
+
+        DragHandler {
+            id: moveHandler
+
+            target: null
+            acceptedButtons: Qt.LeftButton
+            grabPermissions: PointerHandler.CanTakeOverFromAnything
+                             | PointerHandler.ApprovesTakeOverByAnything
+            onActiveChanged: {
+                Pointer.debug(active ? "move-grab" : "move-ungrab", "window", "")
+                if (active) {
+                    Pointer.handOff(moveHandler, function() {
+                        root.targetWindow.startSystemMove()
+                    })
+                }
             }
         }
     }
 
     RowLayout {
+        id: windowButtons
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         spacing: 0
 
-        ToolButton {
+        TapControl {
             id: minimizeButton
+            objectName: "minimizeButton"
 
             Layout.preferredWidth: 44
             Layout.fillHeight: true
-            text: "−"
-            onClicked: root.targetWindow.showMinimized()
-            ToolTip.visible: hovered
-            ToolTip.text: "最小化"
+            hoverFill: root.theme.hoverColor
+            tooltip: "最小化"
+            onTapped: root.targetWindow.showMinimized()
 
-            contentItem: Text {
-                text: minimizeButton.text
+            Text {
+                anchors.centerIn: parent
+                text: "−"
                 color: root.theme.textColor
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
                 font.pixelSize: 17
             }
-
-            background: Rectangle {
-                color: minimizeButton.hovered ? root.theme.hoverColor : "transparent"
-            }
         }
 
-        ToolButton {
+        TapControl {
             id: maximizeButton
+            objectName: "maximizeButton"
 
             Layout.preferredWidth: 44
             Layout.fillHeight: true
-            text: root.targetWindow.visibility === Window.Maximized ? "❐" : "□"
-            onClicked: {
-                if (root.targetWindow.visibility === Window.Maximized) {
+            hoverFill: root.theme.hoverColor
+            tooltip: root.targetWindow.visibility === Window.Maximized ? "还原" : "最大化"
+            onTapped: {
+                if (root.targetWindow.visibility === Window.Maximized)
                     root.targetWindow.showNormal()
-                } else {
+                else
                     root.targetWindow.showMaximized()
-                }
             }
-            ToolTip.visible: hovered
-            ToolTip.text: root.targetWindow.visibility === Window.Maximized ? "还原" : "最大化"
 
-            contentItem: Text {
-                text: maximizeButton.text
+            Text {
+                anchors.centerIn: parent
+                text: root.targetWindow.visibility === Window.Maximized ? "❐" : "□"
                 color: root.theme.textColor
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
                 font.pixelSize: 15
             }
-
-            background: Rectangle {
-                color: maximizeButton.hovered ? root.theme.hoverColor : "transparent"
-            }
         }
 
-        ToolButton {
+        TapControl {
             id: closeButton
+            objectName: "closeButton"
 
             Layout.preferredWidth: 44
             Layout.fillHeight: true
-            text: "×"
-            onClicked: {
+            hoverFill: root.theme.hoverColor
+            tooltip: "关闭"
+            onTapped: {
                 root.targetWindow.close()
                 Qt.quit()
             }
-            ToolTip.visible: hovered
-            ToolTip.text: "关闭"
 
-            contentItem: Text {
-                text: closeButton.text
+            Text {
+                anchors.centerIn: parent
+                text: "×"
                 color: root.theme.textColor
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
                 font.pixelSize: 18
-            }
-
-            background: Rectangle {
-                color: closeButton.hovered ? root.theme.hoverColor : "transparent"
             }
         }
     }
