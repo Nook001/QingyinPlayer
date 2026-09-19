@@ -8,6 +8,7 @@ rust-version.workspace = true
 cstr.workspace = true
 image.workspace = true
 qmetaobject.workspace = true
+qingyin-chinese = { path = "../chinese" }
 qingyin-core = { path = "../core" }
 qingyin-library = { path = "../library" }
 qingyin-metadata = { path = "../metadata" }

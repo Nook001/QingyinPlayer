@@ -9,6 +9,7 @@ Item {
 
     required property var theme
     required property bool darkMode
+    required property string musicFolders
     signal themeRequested(bool dark)
 
     ButtonGroup {
@@ -54,6 +55,30 @@ Item {
             ButtonGroup.group: themeGroup
             palette.buttonText: root.theme.textColor
             onClicked: root.themeRequested(true)
+        }
+
+        Text {
+            text: "音乐文件夹"
+            color: root.theme.textColor
+            font.pixelSize: 16
+            font.weight: Font.DemiBold
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: root.musicFolders.trim() !== ""
+            text: root.musicFolders
+            color: root.theme.mutedTextColor
+            font.pixelSize: 13
+            wrapMode: Text.Wrap
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: root.musicFolders.trim() === ""
+            text: "尚未添加音乐文件夹"
+            color: root.theme.mutedTextColor
+            font.pixelSize: 13
         }
 
         Item { Layout.fillHeight: true }

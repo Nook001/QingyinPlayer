@@ -19,7 +19,7 @@ ApplicationWindow {
 
     property int currentView: 0
     property bool sidebarCollapsed: false
-    property bool darkTheme: false
+    property bool darkTheme: backend.dark_theme
 
     readonly property real cornerRadius: visibility === Window.Maximized ? 0 : 10
     readonly property real resizeBorderWidth: 6
@@ -49,6 +49,8 @@ ApplicationWindow {
     AppBridge {
         id: backend
     }
+
+    Component.onCompleted: backend.restore_session()
 
     background: Rectangle {
         color: window.backgroundColor
@@ -263,13 +265,20 @@ ApplicationWindow {
                     theme: window
                     libraryModel: backend
                 }
-                Artist { theme: window }
-                Album { theme: window }
+                Artist {
+                    theme: window
+                    libraryModel: backend
+                }
+                Album {
+                    theme: window
+                    libraryModel: backend
+                }
                 Settings {
                     theme: window
-                    darkMode: window.darkTheme
+                    darkMode: backend.dark_theme
+                    musicFolders: backend.music_folders
                     onThemeRequested: function(dark) {
-                        window.darkTheme = dark
+                        backend.set_dark_theme(dark)
                     }
                 }
             }

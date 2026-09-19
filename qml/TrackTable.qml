@@ -9,12 +9,13 @@ Item {
 
     required property var theme
     required property var trackModel
+    property bool sortable: true
     readonly property alias count: trackList.count
 
     signal trackActivated(int row)
 
     function heading(label, column) {
-        if (root.trackModel.sort_column !== column)
+        if (!root.sortable || root.trackModel.sort_column !== column)
             return label
         return label + (root.trackModel.sort_ascending ? " ↑" : " ↓")
     }
@@ -42,7 +43,8 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
                 flat: true
-                onClicked: root.trackModel.set_sort("title")
+                enabled: root.sortable
+                onClicked: if (root.sortable) root.trackModel.set_sort("title")
 
                 contentItem: Text {
                     text: root.heading("歌曲名", "title")
@@ -62,7 +64,8 @@ Item {
 
                 Layout.preferredWidth: 190
                 Layout.preferredHeight: 28
-                flat: true
+                enabled: root.sortable
+                onClicked: if (root.sortable)
                 onClicked: root.trackModel.set_sort("album")
 
                 contentItem: Text {
@@ -83,7 +86,8 @@ Item {
 
                 Layout.preferredWidth: 48
                 Layout.preferredHeight: 28
-                flat: true
+                enabled: root.sortable
+                onClicked: if (root.sortable)
                 onClicked: root.trackModel.set_sort("duration")
 
                 contentItem: Text {

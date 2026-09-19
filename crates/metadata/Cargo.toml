@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+qingyin-chinese = { path = "../chinese" }
 lofty.workspace = true
 serde.workspace = true
 thiserror.workspace = true

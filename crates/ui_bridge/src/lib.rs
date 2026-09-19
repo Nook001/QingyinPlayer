@@ -1,17 +1,28 @@
+mod collections;
+
+use collections::{CollectionModel, DetailTrackModel};
 use cstr::cstr;
 use image::{ImageFormat, ImageReader, Limits};
-use qingyin_library::MusicLibrary;
+use qingyin_chinese::compare_keys;
+use qingyin_core::Settings;
+use qingyin_library::{
+    CollectionEntry, LibraryWatcher, MusicLibrary, WatchSummary, aggregate_albums,
+    aggregate_artists, watch_directories,
+};
 use qingyin_metadata::{TrackMetadata, read_cover};
 use qingyin_player::{PlaybackState, Player, PlayerEvent};
 use qingyin_storage::Database;
 use qmetaobject::QUrl;
 use qmetaobject::prelude::*;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tracing::warn;
 
 const TITLE_ROLE: i32 = 0x0100;
 const ARTIST_ROLE: i32 = TITLE_ROLE + 1;
@@ -37,7 +48,7 @@ struct SearchResult {
     tracks: Vec<TrackMetadata>,
 }
 
-#[allow(missing_debug_implementations)]
+#[allow(missing_debug_implementations, clippy::struct_excessive_bools)]
 #[derive(QObject, Default)]
 pub struct AppBridge {
     base: qt_base_class!(trait QAbstractListModel),
@@ -45,6 +56,19 @@ pub struct AppBridge {
     cover_urls: Vec<String>,
     library_tracks: Vec<TrackMetadata>,
     library_cover_urls: Vec<String>,
+    playback_tracks: Vec<TrackMetadata>,
+    playback_cover_urls: Vec<String>,
+    artist_model: qt_property!(RefCell<CollectionModel>; CONST),
+    album_model: qt_property!(RefCell<CollectionModel>; CONST),
+    artist_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
+    album_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
+    selected_artist: qt_property!(QString; NOTIFY collections_changed),
+    selected_artist_subtitle: qt_property!(QString; NOTIFY collections_changed),
+    selected_artist_cover: qt_property!(QString; NOTIFY collections_changed),
+    selected_album: qt_property!(QString; NOTIFY collections_changed),
+    selected_album_subtitle: qt_property!(QString; NOTIFY collections_changed),
+    selected_album_cover: qt_property!(QString; NOTIFY collections_changed),
+    collections_changed: qt_signal!(),
     search_generation: u64,
     search_query: qt_property!(QString; NOTIFY search_changed),
     searching: qt_property!(bool; NOTIFY search_changed),
@@ -53,6 +77,12 @@ pub struct AppBridge {
     sort_column: qt_property!(QString; NOTIFY sort_changed),
     sort_ascending: qt_property!(bool; NOTIFY sort_changed),
     sort_changed: qt_signal!(),
+    dark_theme: qt_property!(bool; NOTIFY settings_changed),
+    music_folders: qt_property!(QString; NOTIFY settings_changed),
+    settings_changed: qt_signal!(),
+    settings: Settings,
+    restored: bool,
+    watcher: Option<LibraryWatcher>,
     scanning: qt_property!(bool; NOTIFY scanning_changed),
     scanning_changed: qt_signal!(),
     scan_status: qt_property!(QString; NOTIFY scan_status_changed),
@@ -101,6 +131,7 @@ pub struct AppBridge {
             self.scan_status = "正在扫描音乐文件…".into();
             self.scan_status_changed();
 
+            let scan_path = path.clone();
             let bridge = QPointer::from(&*self);
             let apply_result =
                 qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
@@ -112,24 +143,25 @@ pub struct AppBridge {
                     bridge.scanning_changed();
                     match result {
                         Ok(result) => {
-                            bridge.library_tracks = result.tracks;
-                            bridge.library_cover_urls = result.cover_urls;
-                            if bridge.search_query.is_empty() {
-                                bridge.show_library_tracks();
+                            if bridge.settings.add_music_directory(path.clone()) {
+                                bridge.persist_settings();
                             }
-                            bridge.scan_status = result.status.into();
+                            bridge.apply_scan_result(result);
+                            bridge.ensure_watcher();
                         }
-                        Err(error) => bridge.scan_status = error.into(),
+                        Err(error) => {
+                            bridge.scan_status = error.into();
+                            bridge.scan_status_changed();
+                        }
                     }
-                    bridge.scan_status_changed();
                 });
 
-            std::thread::spawn(move || apply_result(scan_music_directory(&path)));
+            std::thread::spawn(move || apply_result(scan_music_directory(&scan_path)));
         }
     ),
     play_track: qt_method!(
         fn play_track(&mut self, row: i32) {
-            self.play_row(row);
+            self.play_from_list(self.tracks.clone(), self.cover_urls.clone(), row);
         }
     ),
     toggle_playback: qt_method!(
@@ -142,7 +174,7 @@ pub struct AppBridge {
             let Some(current) = self.current_index else {
                 return;
             };
-            self.play_row(i32::try_from(previous_track_index(current)).unwrap_or(0));
+            self.play_queue_row(i32::try_from(previous_track_index(current)).unwrap_or(0));
         }
     ),
     play_next: qt_method!(
@@ -182,6 +214,48 @@ pub struct AppBridge {
             self.set_sort_internal(&column);
         }
     ),
+    set_dark_theme: qt_method!(
+        fn set_dark_theme(&mut self, dark: bool) {
+            self.set_dark_theme_internal(dark);
+        }
+    ),
+    restore_session: qt_method!(
+        fn restore_session(&mut self) {
+            self.restore_session_internal();
+        }
+    ),
+    open_artist: qt_method!(
+        fn open_artist(&mut self, row: i32) {
+            self.open_artist_internal(row);
+        }
+    ),
+    close_artist: qt_method!(
+        fn close_artist(&mut self) {
+            self.close_artist_internal();
+        }
+    ),
+    play_artist_track: qt_method!(
+        fn play_artist_track(&mut self, row: i32) {
+            let (tracks, covers) = self.artist_detail.borrow().snapshot();
+            self.play_from_list(tracks, covers, row);
+        }
+    ),
+    open_album: qt_method!(
+        fn open_album(&mut self, row: i32) {
+            self.open_album_internal(row);
+        }
+    ),
+    close_album: qt_method!(
+        fn close_album(&mut self) {
+            self.close_album_internal();
+        }
+    ),
+    play_album_track: qt_method!(
+        fn play_album_track(&mut self, row: i32) {
+            let (tracks, covers) = self.album_detail.borrow().snapshot();
+            self.play_from_list(tracks, covers, row);
+        }
+    ),
 }
 
 impl AppBridge {
@@ -201,17 +275,26 @@ impl AppBridge {
         player
             .set_event_handler(dispatch)
             .map_err(|error| error.to_string())?;
+        player.set_volume(self.player_volume);
         self.player_volume = player.volume();
         self.player = Some(player);
         self.playback_progress_changed();
         Ok(())
     }
 
-    fn play_row(&mut self, row: i32) {
-        let Some((row, track)) = usize::try_from(row)
-            .ok()
-            .and_then(|row| self.tracks.get(row).cloned().map(|track| (row, track)))
-        else {
+    fn play_from_list(&mut self, tracks: Vec<TrackMetadata>, cover_urls: Vec<String>, row: i32) {
+        self.playback_tracks = tracks;
+        self.playback_cover_urls = cover_urls;
+        self.play_queue_row(row);
+    }
+
+    fn play_queue_row(&mut self, row: i32) {
+        let Some((row, track)) = usize::try_from(row).ok().and_then(|row| {
+            self.playback_tracks
+                .get(row)
+                .cloned()
+                .map(|track| (row, track))
+        }) else {
             return;
         };
         if let Err(error) = self.ensure_player() {
@@ -227,7 +310,12 @@ impl AppBridge {
         self.current_index = Some(row);
         self.current_title = track.title.into();
         self.current_artist = track.artists.join("、").into();
-        self.current_cover = self.cover_urls.get(row).cloned().unwrap_or_default().into();
+        self.current_cover = self
+            .playback_cover_urls
+            .get(row)
+            .cloned()
+            .unwrap_or_default()
+            .into();
         self.playback_state = "playing".into();
         self.playback_error = QString::default();
         self.playback_position = 0;
@@ -242,7 +330,7 @@ impl AppBridge {
         };
         if state == PlaybackState::Stopped {
             if let Some(row) = self.current_index.and_then(|row| i32::try_from(row).ok()) {
-                self.play_row(row);
+                self.play_queue_row(row);
             }
             return;
         }
@@ -269,7 +357,7 @@ impl AppBridge {
     fn play_next_internal(&mut self) {
         let Some(next) = self
             .current_index
-            .and_then(|current| next_track_index(current, self.tracks.len()))
+            .and_then(|current| next_track_index(current, self.playback_tracks.len()))
         else {
             if self.current_index.is_some() {
                 if let Some(player) = self.player.as_mut() {
@@ -283,7 +371,7 @@ impl AppBridge {
             return;
         };
         if let Ok(next) = i32::try_from(next) {
-            self.play_row(next);
+            self.play_queue_row(next);
         }
     }
 
@@ -322,11 +410,17 @@ impl AppBridge {
     }
 
     fn set_player_volume_internal(&mut self, volume: f64) {
-        let Some(player) = self.player.as_mut() else {
-            return;
-        };
-        player.set_volume(volume);
-        self.player_volume = player.volume();
+        let volume = volume.clamp(0.0, 1.0);
+        if let Some(player) = self.player.as_mut() {
+            player.set_volume(volume);
+            self.player_volume = player.volume();
+        } else {
+            self.player_volume = volume;
+        }
+        if (self.settings.volume - self.player_volume).abs() > f64::EPSILON {
+            self.settings.volume = self.player_volume;
+            self.persist_settings();
+        }
         self.playback_progress_changed();
     }
 
@@ -395,8 +489,198 @@ impl AppBridge {
             self.sort_column = column.into();
             self.sort_ascending = true;
         }
+        self.settings.sort_column = self.sort_column.to_string();
+        self.settings.sort_ascending = self.sort_ascending;
+        self.persist_settings();
         self.sort_visible_tracks();
         self.sort_changed();
+    }
+
+    fn set_dark_theme_internal(&mut self, dark: bool) {
+        if self.dark_theme == dark {
+            return;
+        }
+        self.dark_theme = dark;
+        self.settings.dark_theme = dark;
+        self.persist_settings();
+        self.settings_changed();
+    }
+
+    fn restore_session_internal(&mut self) {
+        if self.restored {
+            return;
+        }
+        self.restored = true;
+        self.settings = Settings::load_or_default();
+        self.apply_settings_to_ui();
+        match load_stored_library() {
+            Ok(result) => self.apply_scan_result(result),
+            Err(error) => {
+                self.scan_status = error.into();
+                self.scan_status_changed();
+            }
+        }
+        let directories = self.settings.music_directories.clone();
+        if !directories.is_empty() {
+            self.scan_directories(directories);
+        }
+        self.ensure_watcher();
+    }
+
+    fn apply_settings_to_ui(&mut self) {
+        self.dark_theme = self.settings.dark_theme;
+        self.player_volume = self.settings.volume;
+        self.sort_column = self.settings.sort_column.clone().into();
+        self.sort_ascending = self.settings.sort_ascending;
+        self.music_folders = format_music_folders(&self.settings.music_directories).into();
+        self.settings_changed();
+        self.sort_changed();
+        self.playback_progress_changed();
+    }
+
+    fn persist_settings(&mut self) {
+        self.music_folders = format_music_folders(&self.settings.music_directories).into();
+        self.settings_changed();
+        if let Err(error) = self.settings.save() {
+            warn!(%error, "failed to save settings");
+        }
+    }
+
+    fn ensure_watcher(&mut self) {
+        self.watcher = None;
+        let directories = self.settings.music_directories.clone();
+        if directories.is_empty() {
+            return;
+        }
+        let Ok(database_path) = database_path() else {
+            warn!("unable to determine library database path for watcher");
+            return;
+        };
+        let bridge = QPointer::from(&*self);
+        let apply_batch = qmetaobject::queued_callback(move |summary: WatchSummary| {
+            let Some(bridge) = bridge.as_pinned() else {
+                return;
+            };
+            bridge.borrow_mut().apply_watch_summary(&summary);
+        });
+        match watch_directories(directories, database_path, apply_batch) {
+            Ok(watcher) => self.watcher = Some(watcher),
+            Err(error) => warn!(%error, "failed to watch music directories"),
+        }
+    }
+
+    fn apply_watch_summary(&mut self, summary: &WatchSummary) {
+        if !summary.has_library_changes() {
+            if summary.failed > 0 {
+                self.scan_status = format!("曲库更新失败 {} 项", summary.failed).into();
+                self.scan_status_changed();
+            }
+            return;
+        }
+
+        match load_stored_tracks() {
+            Ok(tracks) => {
+                let cover_urls =
+                    reuse_or_cache_covers(&self.library_tracks, &self.library_cover_urls, &tracks);
+                self.apply_scan_result(ScanResult {
+                    tracks,
+                    cover_urls,
+                    status: watch_status(summary),
+                });
+                if !self.search_query.is_empty() {
+                    let query = self.search_query.clone();
+                    self.search_tracks_internal(&query);
+                }
+                self.skip_missing_current_track();
+            }
+            Err(error) => {
+                self.scan_status = error.into();
+                self.scan_status_changed();
+            }
+        }
+    }
+
+    fn skip_missing_current_track(&mut self) {
+        let Some(path) = self
+            .player
+            .as_ref()
+            .and_then(Player::current_path)
+            .map(Path::to_path_buf)
+        else {
+            return;
+        };
+        if path.exists() {
+            return;
+        }
+        let Some(next) = self
+            .current_index
+            .and_then(|current| next_track_index(current, self.playback_tracks.len()))
+        else {
+            self.stop_playback_silently();
+            return;
+        };
+        if let Ok(next) = i32::try_from(next) {
+            self.play_queue_row(next);
+        }
+        let missing = self
+            .player
+            .as_ref()
+            .and_then(Player::current_path)
+            .is_none_or(|current| !current.exists());
+        if missing {
+            self.stop_playback_silently();
+        }
+    }
+
+    fn stop_playback_silently(&mut self) {
+        if let Some(player) = self.player.as_mut() {
+            let _ = player.stop();
+        }
+        self.playback_state = "stopped".into();
+        self.playback_error = QString::default();
+        self.playback_position = 0;
+        self.playback_changed();
+        self.playback_progress_changed();
+    }
+
+    fn apply_scan_result(&mut self, result: ScanResult) {
+        self.library_tracks = result.tracks;
+        self.library_cover_urls = result.cover_urls;
+        if self.search_query.is_empty() {
+            self.show_library_tracks();
+        }
+        self.refresh_collections();
+        self.scan_status = result.status.into();
+        self.scan_status_changed();
+    }
+
+    fn scan_directories(&mut self, directories: Vec<PathBuf>) {
+        if self.scanning || directories.is_empty() {
+            return;
+        }
+        self.scanning = true;
+        self.scanning_changed();
+        self.scan_status = "正在核对音乐文件夹…".into();
+        self.scan_status_changed();
+
+        let bridge = QPointer::from(&*self);
+        let apply_result =
+            qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
+                let Some(bridge) = bridge.as_pinned() else {
+                    return;
+                };
+                let mut bridge = bridge.borrow_mut();
+                bridge.scanning = false;
+                bridge.scanning_changed();
+                match result {
+                    Ok(result) => bridge.apply_scan_result(result),
+                    Err(error) => {
+                        bridge.scan_status = error.into();
+                        bridge.scan_status_changed();
+                    }
+                }
+            });
+        std::thread::spawn(move || apply_result(scan_music_directories(&directories)));
     }
 
     fn show_library_tracks(&mut self) {
@@ -430,9 +714,11 @@ impl AppBridge {
             );
         }
         self.end_reset_model();
-        self.current_index = current_path
-            .as_ref()
-            .and_then(|path| self.tracks.iter().position(|track| &track.path == path));
+        if self.playback_tracks.is_empty() {
+            self.current_index = current_path
+                .as_ref()
+                .and_then(|path| self.tracks.iter().position(|track| &track.path == path));
+        }
     }
 
     fn sort_visible_tracks(&mut self) {
@@ -457,6 +743,103 @@ impl AppBridge {
         }
     }
 
+    fn refresh_collections(&mut self) {
+        let selected_artist = self.selected_artist.to_string();
+        let selected_album = self.selected_album.to_string();
+        self.artist_model.borrow_mut().reset(aggregate_artists(
+            &self.library_tracks,
+            &self.library_cover_urls,
+        ));
+        self.album_model.borrow_mut().reset(aggregate_albums(
+            &self.library_tracks,
+            &self.library_cover_urls,
+        ));
+        if selected_artist.is_empty() {
+            self.close_artist_internal();
+        } else {
+            self.show_artist_by_name(&selected_artist);
+        }
+        if selected_album.is_empty() {
+            self.close_album_internal();
+        } else {
+            self.show_album_by_name(&selected_album);
+        }
+        self.collections_changed();
+    }
+
+    fn open_artist_internal(&mut self, row: i32) {
+        let Some(entry) = usize::try_from(row)
+            .ok()
+            .and_then(|row| self.artist_model.borrow().entry(row))
+        else {
+            return;
+        };
+        self.show_artist_entry(entry);
+    }
+
+    fn close_artist_internal(&mut self) {
+        self.selected_artist = QString::default();
+        self.selected_artist_subtitle = QString::default();
+        self.selected_artist_cover = QString::default();
+        self.artist_detail
+            .borrow_mut()
+            .reset(Vec::new(), Vec::new());
+        self.collections_changed();
+    }
+
+    fn show_artist_by_name(&mut self, name: &str) {
+        let entry = self.artist_model.borrow().entry_by_name(name);
+        match entry {
+            Some(entry) => self.show_artist_entry(entry),
+            None => self.close_artist_internal(),
+        }
+    }
+
+    fn show_artist_entry(&mut self, entry: CollectionEntry) {
+        self.selected_artist = entry.name.into();
+        self.selected_artist_subtitle = entry.subtitle.into();
+        self.selected_artist_cover = entry.cover_url.into();
+        self.artist_detail
+            .borrow_mut()
+            .reset(entry.tracks, entry.cover_urls);
+        self.collections_changed();
+    }
+
+    fn open_album_internal(&mut self, row: i32) {
+        let Some(entry) = usize::try_from(row)
+            .ok()
+            .and_then(|row| self.album_model.borrow().entry(row))
+        else {
+            return;
+        };
+        self.show_album_entry(entry);
+    }
+
+    fn close_album_internal(&mut self) {
+        self.selected_album = QString::default();
+        self.selected_album_subtitle = QString::default();
+        self.selected_album_cover = QString::default();
+        self.album_detail.borrow_mut().reset(Vec::new(), Vec::new());
+        self.collections_changed();
+    }
+
+    fn show_album_by_name(&mut self, name: &str) {
+        let entry = self.album_model.borrow().entry_by_name(name);
+        match entry {
+            Some(entry) => self.show_album_entry(entry),
+            None => self.close_album_internal(),
+        }
+    }
+
+    fn show_album_entry(&mut self, entry: CollectionEntry) {
+        self.selected_album = entry.name.into();
+        self.selected_album_subtitle = entry.subtitle.into();
+        self.selected_album_cover = entry.cover_url.into();
+        self.album_detail
+            .borrow_mut()
+            .reset(entry.tracks, entry.cover_urls);
+        self.collections_changed();
+    }
     fn set_playback_error(&mut self, error: String) {
         self.playback_state = "stopped".into();
         self.playback_error = error.into();
@@ -511,24 +894,110 @@ pub fn register_qml_types() {
 }
 
 fn scan_music_directory(path: &Path) -> Result<ScanResult, String> {
-    let database_path = database_path()?;
-    let mut database = Database::open(database_path).map_err(|error| error.to_string())?;
-    let mut library = MusicLibrary::default();
-    let summary = library
-        .scan_directory(&mut database, path)
-        .map_err(|error| error.to_string())?;
-    let failed = summary.failed.len();
-    let status = format!(
-        "扫描完成：导入 {} 首，跳过 {} 首，失败 {} 首",
-        summary.imported, summary.unchanged, failed
-    );
-    let cover_urls = cache_cover_urls(library.tracks());
+    scan_music_directories(&[path.to_path_buf()])
+}
 
+fn scan_music_directories(directories: &[PathBuf]) -> Result<ScanResult, String> {
+    let mut database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+    let mut library = MusicLibrary::default();
+    let mut imported = 0;
+    let mut unchanged = 0;
+    let mut failed = 0;
+    for directory in directories {
+        match library.scan_directory(&mut database, directory) {
+            Ok(summary) => {
+                imported += summary.imported;
+                unchanged += summary.unchanged;
+                failed += summary.failed.len();
+            }
+            Err(error) => {
+                warn!(path = %directory.display(), %error, "failed to scan music directory");
+                failed += 1;
+            }
+        }
+    }
+    let tracks = database
+        .list_tracks()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|track| track.metadata)
+        .collect::<Vec<_>>();
+    let cover_urls = cache_cover_urls(&tracks);
     Ok(ScanResult {
-        tracks: library.tracks().to_vec(),
+        tracks,
+        cover_urls,
+        status: format!("扫描完成：导入 {imported} 首，跳过 {unchanged} 首，失败 {failed} 首"),
+    })
+}
+
+fn load_stored_library() -> Result<ScanResult, String> {
+    let tracks = load_stored_tracks()?;
+    let cover_urls = cache_cover_urls(&tracks);
+    let status = if tracks.is_empty() {
+        String::new()
+    } else {
+        format!("已恢复 {} 首歌曲", tracks.len())
+    };
+    Ok(ScanResult {
+        tracks,
         cover_urls,
         status,
     })
+}
+
+fn load_stored_tracks() -> Result<Vec<TrackMetadata>, String> {
+    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+    database
+        .list_tracks()
+        .map_err(|error| error.to_string())
+        .map(|tracks| {
+            tracks
+                .into_iter()
+                .map(|track| track.metadata)
+                .collect::<Vec<_>>()
+        })
+}
+
+fn reuse_or_cache_covers(
+    previous_tracks: &[TrackMetadata],
+    previous_covers: &[String],
+    tracks: &[TrackMetadata],
+) -> Vec<String> {
+    let mut previous = HashMap::new();
+    for (track, cover) in previous_tracks.iter().zip(previous_covers) {
+        if !cover.is_empty() {
+            previous.insert(track.path.clone(), cover.clone());
+        }
+    }
+    tracks
+        .iter()
+        .map(|track| {
+            previous.remove(&track.path).unwrap_or_else(|| {
+                cache_directory()
+                    .and_then(|directory| cache_cover(&directory, &track.path))
+                    .unwrap_or_default()
+            })
+        })
+        .collect()
+}
+
+fn watch_status(summary: &WatchSummary) -> String {
+    let mut status = format!(
+        "已更新曲库：新增 {}，删除 {}",
+        summary.upserted, summary.removed
+    );
+    if summary.failed > 0 {
+        let _ = write!(status, "，失败 {}", summary.failed);
+    }
+    status
+}
+
+fn format_music_folders(directories: &[PathBuf]) -> String {
+    directories
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn search_database(query: &str) -> Result<SearchResult, String> {
@@ -569,16 +1038,10 @@ fn sort_tracks(
 
 fn compare_tracks(left: &TrackMetadata, right: &TrackMetadata, column: &str) -> Ordering {
     match column {
-        "album" => compare_text(left.album.as_deref(), right.album.as_deref()),
+        "album" => compare_keys(&left.album_key, &right.album_key),
         "duration" => left.duration.cmp(&right.duration),
-        _ => compare_text(Some(&left.title), Some(&right.title)),
+        _ => compare_keys(&left.title_key, &right.title_key),
     }
-}
-
-fn compare_text(left: Option<&str>, right: Option<&str>) -> Ordering {
-    left.unwrap_or_default()
-        .to_lowercase()
-        .cmp(&right.unwrap_or_default().to_lowercase())
 }
 
 fn cache_cover_urls(tracks: &[TrackMetadata]) -> Vec<String> {
@@ -713,13 +1176,96 @@ mod tests {
         assert_eq!(covers, ["B封面", "A封面"]);
     }
 
+    #[test]
+    fn sorts_han_titles_among_latin_titles() {
+        let mut tracks = vec![
+            test_track("周杰伦", "专辑", 10),
+            test_track("Adele", "专辑", 10),
+            test_track("阿妹", "专辑", 10),
+        ];
+        let mut covers = vec!["z".into(), "a".into(), "m".into()];
+        sort_tracks(&mut tracks, &mut covers, "title", true);
+        assert_eq!(
+            tracks
+                .iter()
+                .map(|track| track.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Adele", "阿妹", "周杰伦"]
+        );
+    }
+
+    #[test]
+    fn formats_music_folders_on_separate_lines() {
+        let folders = format_music_folders(&[PathBuf::from("/music/a"), PathBuf::from("/music/b")]);
+        assert_eq!(folders, "/music/a\n/music/b");
+    }
+
+    #[test]
+    fn watch_status_includes_failed_counts() {
+        let summary = WatchSummary {
+            upserted: 2,
+            removed: 1,
+            failed: 0,
+        };
+        assert_eq!(watch_status(&summary), "已更新曲库：新增 2，删除 1");
+        let failed = WatchSummary {
+            upserted: 0,
+            removed: 1,
+            failed: 3,
+        };
+        assert_eq!(watch_status(&failed), "已更新曲库：新增 0，删除 1，失败 3");
+    }
+
+    #[test]
+    fn reuses_cached_cover_urls_for_unchanged_paths() {
+        let previous_tracks = vec![test_track("A", "专辑", 10)];
+        let previous_covers = vec!["file:///cache/a.png".to_owned()];
+        let tracks = vec![test_track("A", "专辑", 10), test_track("B", "专辑", 12)];
+        let covers = reuse_or_cache_covers(&previous_tracks, &previous_covers, &tracks);
+        assert_eq!(covers[0], "file:///cache/a.png");
+        assert_eq!(covers.len(), 2);
+    }
+
+    #[test]
+    fn aggregates_visible_library_into_artist_and_album_groups() {
+        let tracks = vec![
+            TrackMetadata::from_display(
+                "/music/a.flac",
+                "A",
+                Some("清音".into()),
+                vec!["甲".into()],
+                Some(Duration::from_secs(10)),
+            ),
+            TrackMetadata::from_display(
+                "/music/b.flac",
+                "B",
+                Some("清音".into()),
+                vec!["甲".into(), "乙".into()],
+                Some(Duration::from_secs(12)),
+            ),
+        ];
+        let covers = vec!["cover-a".to_owned(), "cover-b".to_owned()];
+        let artists = aggregate_artists(&tracks, &covers);
+        let albums = aggregate_albums(&tracks, &covers);
+
+        assert_eq!(artists.len(), 2);
+        assert_eq!(artists[0].name, "甲");
+        assert_eq!(artists[0].track_count, 2);
+        assert_eq!(artists[1].name, "乙");
+        assert_eq!(artists[1].track_count, 1);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].name, "清音");
+        assert_eq!(albums[0].track_count, 2);
+        assert_eq!(albums[0].cover_url, "cover-a");
+    }
+
     fn test_track(title: &str, album: &str, duration: u64) -> TrackMetadata {
-        TrackMetadata {
-            path: format!("/music/{title}.flac").into(),
-            title: title.to_owned(),
-            album: Some(album.to_owned()),
-            artists: Vec::new(),
-            duration: Some(Duration::from_secs(duration)),
-        }
+        TrackMetadata::from_display(
+            format!("/music/{title}.flac"),
+            title,
+            Some(album.to_owned()),
+            Vec::new(),
+            Some(Duration::from_secs(duration)),
+        )
     }
 }

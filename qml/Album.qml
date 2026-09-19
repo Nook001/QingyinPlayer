@@ -1,35 +1,21 @@
-import QtQuick
-import QtQuick.Layouts
+pragma ComponentBehavior: Bound
 
-Item {
+import QtQuick
+
+CollectionBrowser {
     id: root
 
-    required property var theme
+    required property var libraryModel
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 34
-        spacing: 18
-
-        Text {
-            text: "专辑"
-            color: root.theme.textColor
-            font.pixelSize: 28
-            font.weight: Font.DemiBold
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: root.theme.dividerColor
-        }
-
-        Text {
-            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-            Layout.fillHeight: true
-            text: "添加音乐后，专辑将显示在这里"
-            color: root.theme.mutedTextColor
-            font.pixelSize: 14
-        }
-    }
+    title: "专辑"
+    emptyTitle: "还没有专辑"
+    emptySubtitle: "添加音乐后，专辑将显示在这里"
+    collectionModel: root.libraryModel.album_model
+    detailModel: root.libraryModel.album_detail
+    selectedName: root.libraryModel.selected_album
+    selectedSubtitle: root.libraryModel.selected_album_subtitle
+    selectedCover: root.libraryModel.selected_album_cover
+    onCollectionOpened: function(row) { root.libraryModel.open_album(row) }
+    onCollectionClosed: root.libraryModel.close_album()
+    onTrackActivated: function(row) { root.libraryModel.play_album_track(row) }
 }

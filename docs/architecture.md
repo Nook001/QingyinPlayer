@@ -68,6 +68,8 @@ qingyin/
 │   ├── Library.qml
 │   ├── Artist.qml
 │   ├── Album.qml
+│   ├── CollectionBrowser.qml
+│   ├── TrackTable.qml
 │   ├── PlayerBar.qml
 │   ├── Settings.qml
 │   ├── WindowControls.qml

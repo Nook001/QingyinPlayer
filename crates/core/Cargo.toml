@@ -9,6 +9,8 @@ qingyin-library = { path = "../library" }
 qingyin-metadata = { path = "../metadata" }
 qingyin-player = { path = "../player" }
 serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
 tracing.workspace = true
 
 [lints]

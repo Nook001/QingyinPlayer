@@ -7,14 +7,113 @@ Module {
         exports: ["Qingyin/AppBridge 1.0"]
         exportMetaObjectRevisions: [256]
 
-        Method {
-            name: "application_name"
-            type: "QString"
-        }
+        Property { name: "search_query"; type: "QString" }
+        Property { name: "searching"; type: "bool" }
+        Property { name: "search_status"; type: "QString" }
+        Property { name: "sort_column"; type: "QString" }
+        Property { name: "sort_ascending"; type: "bool" }
+        Property { name: "dark_theme"; type: "bool" }
+        Property { name: "music_folders"; type: "QString" }
+        Property { name: "scanning"; type: "bool" }
+        Property { name: "scan_status"; type: "QString" }
+        Property { name: "playback_state"; type: "QString" }
+        Property { name: "current_title"; type: "QString" }
+        Property { name: "current_artist"; type: "QString" }
+        Property { name: "current_cover"; type: "QString" }
+        Property { name: "playback_error"; type: "QString" }
+        Property { name: "playback_position"; type: "long" }
+        Property { name: "playback_duration"; type: "long" }
+        Property { name: "player_volume"; type: "double" }
+        Property { name: "artist_model"; type: "CollectionModel"; isPointer: true; isReadonly: true }
+        Property { name: "album_model"; type: "CollectionModel"; isPointer: true; isReadonly: true }
+        Property { name: "artist_detail"; type: "DetailTrackModel"; isPointer: true; isReadonly: true }
+        Property { name: "album_detail"; type: "DetailTrackModel"; isPointer: true; isReadonly: true }
+        Property { name: "selected_artist"; type: "QString" }
+        Property { name: "selected_artist_subtitle"; type: "QString" }
+        Property { name: "selected_artist_cover"; type: "QString" }
+        Property { name: "selected_album"; type: "QString" }
+        Property { name: "selected_album_subtitle"; type: "QString" }
+        Property { name: "selected_album_cover"; type: "QString" }
 
+        Method { name: "application_name"; type: "QString" }
+        Method { name: "version"; type: "QString" }
         Method {
-            name: "version"
-            type: "QString"
+            name: "add_library_folder"
+            Parameter { name: "folder"; type: "QUrl" }
+        }
+        Method {
+            name: "play_track"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method { name: "toggle_playback" }
+        Method { name: "play_previous" }
+        Method { name: "play_next" }
+        Method { name: "refresh_playback_progress" }
+        Method {
+            name: "seek_to"
+            Parameter { name: "position"; type: "long" }
+        }
+        Method {
+            name: "set_player_volume"
+            Parameter { name: "volume"; type: "double" }
+        }
+        Method {
+            name: "search_tracks"
+            Parameter { name: "query"; type: "string" }
+        }
+        Method { name: "clear_search" }
+        Method {
+            name: "set_sort"
+            Parameter { name: "column"; type: "string" }
+        }
+        Method {
+            name: "set_dark_theme"
+            Parameter { name: "dark"; type: "bool" }
+        }
+        Method { name: "restore_session" }
+        Method {
+            name: "open_artist"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method { name: "close_artist" }
+        Method {
+            name: "play_artist_track"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "open_album"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method { name: "close_album" }
+        Method {
+            name: "play_album_track"
+            Parameter { name: "row"; type: "int" }
+        }
+    }
+
+    Component {
+        name: "CollectionModel"
+        prototype: "QAbstractListModel"
+        Property { name: "name"; type: "QString" }
+        Property { name: "subtitle"; type: "QString" }
+        Property { name: "cover"; type: "QString" }
+        Property { name: "track_count"; type: "long" }
+    }
+
+    Component {
+        name: "DetailTrackModel"
+        prototype: "QAbstractListModel"
+        Property { name: "title"; type: "QString" }
+        Property { name: "artist"; type: "QString" }
+        Property { name: "album"; type: "QString" }
+        Property { name: "duration"; type: "QString" }
+        Property { name: "path"; type: "QString" }
+        Property { name: "cover"; type: "QString" }
+        Property { name: "sort_column"; type: "QString" }
+        Property { name: "sort_ascending"; type: "bool" }
+        Method {
+            name: "set_sort"
+            Parameter { name: "column"; type: "string" }
         }
     }
 }
