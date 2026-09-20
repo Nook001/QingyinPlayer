@@ -8,6 +8,7 @@ CollectionBrowser {
     required property var libraryModel
 
     title: "歌手"
+    compact: true
     emptyTitle: "还没有歌手"
     emptySubtitle: "添加音乐后，歌手将显示在这里"
     collectionModel: root.libraryModel.artist_model

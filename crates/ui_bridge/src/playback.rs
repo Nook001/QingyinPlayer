@@ -375,6 +375,7 @@ pub struct PlaybackController {
     persist_volume: Option<Arc<dyn Fn(f64) + Send + Sync>>,
     persist_play_mode: Option<Arc<dyn Fn(PlayMode) + Send + Sync>>,
     playback_state: qt_property!(QString; NOTIFY playback_changed),
+    current_track_id: qt_property!(i64; NOTIFY playback_changed),
     current_title: qt_property!(QString; NOTIFY playback_changed),
     current_artist: qt_property!(QString; NOTIFY playback_changed),
     current_cover: qt_property!(QString; NOTIFY playback_changed),
@@ -663,6 +664,11 @@ impl PlaybackController {
     }
 
     fn publish_identity(&mut self) {
+        self.current_track_id = self
+            .engine
+            .current
+            .and_then(|index| self.engine.queue.get(index))
+            .map_or(0, TrackSnapshot::id);
         self.current_title = self.engine.title.clone().into();
         self.current_artist = self.engine.artist.clone().into();
         self.current_cover = self.engine.cover.clone().into();

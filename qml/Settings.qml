@@ -12,17 +12,30 @@ Item {
     required property string musicFolders
     property string settingsError
     signal themeRequested(bool dark)
+    signal backRequested()
+
+    Shortcut { sequence: "Escape"; onActivated: root.backRequested() }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 18
         spacing: 18
 
-        Text {
-            text: "设置"
-            color: root.theme.textColor
-            font.pixelSize: 28
-            font.weight: Font.DemiBold
+        RowLayout {
+            Layout.fillWidth: true
+            FlatButton {
+                theme: root.theme
+                iconName: "chevronLeft"
+                Accessible.name: "返回曲库"
+                onClicked: root.backRequested()
+            }
+            Text {
+                text: "设置"
+                color: root.theme.textColor
+                font.pixelSize: 28
+                font.weight: Font.DemiBold
+            }
+            Item { Layout.fillWidth: true }
         }
 
         Rectangle {

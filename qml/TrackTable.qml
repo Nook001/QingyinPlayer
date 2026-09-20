@@ -10,6 +10,10 @@ Item {
     required property var theme
     required property var trackModel
     property bool sortable: true
+    property int currentTrackId: 0
+    property string playbackState: "stopped"
+    property int selectedTrackId: 0
+    signal togglePlaybackRequested()
     property string sortColumn
     property bool sortAscending: true
     property real savedContentY: 0
@@ -34,6 +38,52 @@ Item {
         trackList.contentY = Math.max(0, position)
     }
 
+    function selectTrack(row, trackId) {
+        root.selectedTrackId = trackId
+        trackList.currentIndex = row
+        trackList.forceActiveFocus()
+    }
+
+    function revealTrack(trackId) {
+        const row = root.trackModel.index_of_track(trackId)
+        if (row < 0)
+            return
+        trackList.forceLayout()
+        root.selectTrack(row, trackId)
+        trackList.positionViewAtIndex(row, ListView.Center)
+    }
+
+    function restoreSelection() {
+        trackList.currentIndex = root.selectedTrackId === 0
+            ? -1 : root.trackModel.index_of_track(root.selectedTrackId)
+    }
+
+    function moveSelection(delta) {
+        if (!trackList.count)
+            return
+        const current = root.trackModel.index_of_track(root.selectedTrackId)
+        const row = current < 0 ? 0 : Math.max(0, Math.min(trackList.count - 1, current + delta))
+        root.selectTrack(row, root.trackModel.track_id_at(row))
+        trackList.positionViewAtIndex(row, ListView.Contain)
+    }
+
+    function activateSelected() {
+        if (root.trackModel.index_of_track(root.selectedTrackId) >= 0) {
+            const id = root.selectedTrackId
+            Qt.callLater(() => root.trackActivated(id))
+        }
+    }
+
+    Connections {
+        target: root.trackModel
+        function onModelReset() { root.restoreSelection() }
+        function onDataChanged() { root.restoreSelection() }
+        function onRowsRemoved() { root.restoreSelection() }
+        function onRowsInserted() { root.restoreSelection() }
+        function onRowsMoved() { root.restoreSelection() }
+        function onLayoutChanged() { root.restoreSelection() }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 6
@@ -54,16 +104,6 @@ Item {
                 font.pixelSize: 12
             }
 
-            Text {
-                Layout.preferredWidth: 44
-                Layout.minimumWidth: 44
-                Layout.maximumWidth: 44
-                text: "封面"
-                color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: 12
-            }
-
             FlatButton {
                 Layout.fillWidth: true
                 preferredHeight: 28
@@ -71,7 +111,7 @@ Item {
                 enabled: root.sortable
                 contentAlignment: Text.AlignLeft
                 fontPixelSize: 12
-                text: root.heading("歌曲名", "title")
+                text: root.heading("歌曲", "title")
                 Accessible.name: "按歌曲名排序"
                 onClicked: if (root.sortable)
                     root.sortRequested("title")
@@ -119,6 +159,12 @@ Item {
                 highlightMoveDuration: 0
                 highlightResizeDuration: 0
                 model: root.trackModel
+                currentIndex: -1
+                keyNavigationEnabled: false
+                Keys.onUpPressed: root.moveSelection(-1)
+                Keys.onDownPressed: root.moveSelection(1)
+                Keys.onReturnPressed: root.activateSelected()
+                Keys.onEnterPressed: root.activateSelected()
                 spacing: 2
                 footerPositioning: ListView.InlineFooter
                 footer: Item {
@@ -136,6 +182,11 @@ Item {
                     required property string duration
                     required property string cover
                     required property int trackId
+                    objectName: "trackRow" + trackId
+                    readonly property bool isCurrent: trackId === root.currentTrackId
+                        && root.playbackState !== "stopped"
+                    readonly property bool isSelected: trackId === root.selectedTrackId
+                    focusPolicy: Qt.NoFocus
 
                     width: ListView.view ? ListView.view.width : 0
                     height: 58
@@ -144,11 +195,12 @@ Item {
                     text: trackRow.title
                     Accessible.name: trackRow.title
 
-                    ListView.onPooled: trackRow.highlighted = false
-                    ListView.onReused: trackRow.highlighted = false
 
                     background: RoundedRect {
-                        color: trackRow.hovered ? root.theme.hoverColor : "transparent"
+                        color: trackRow.isSelected ? root.theme.subtleColor
+                            : (trackRow.hovered ? root.theme.hoverColor : "transparent")
+                        borderWidth: trackRow.isSelected && trackList.activeFocus ? 1 : 0
+                        borderColor: root.theme.accentColor
                         radius: 5
                     }
 
@@ -158,15 +210,36 @@ Item {
                         anchors.rightMargin: 16
                         spacing: 10
 
-                        Text {
+                        Item {
                             Layout.preferredWidth: root.indexWidth
-                            Layout.minimumWidth: root.indexWidth
-                            Layout.maximumWidth: root.indexWidth
-                            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                            text: String(trackRow.index + 1)
-                            color: root.theme.mutedTextColor
-                            horizontalAlignment: Text.AlignHCenter
-                            font.pixelSize: 12
+                            Layout.preferredHeight: 32
+                            Text {
+                                anchors.centerIn: parent
+                                visible: !trackRow.hovered && !trackRow.isCurrent
+                                text: String(trackRow.index + 1)
+                                color: root.theme.mutedTextColor
+                                font.pixelSize: 12
+                            }
+                            FlatButton {
+                                objectName: "rowPlayButton" + trackRow.trackId
+                                anchors.centerIn: parent
+                                theme: root.theme
+                                preferredWidth: 28
+                                preferredHeight: 32
+                                visible: trackRow.hovered || trackRow.isCurrent
+                                iconSize: 14
+                                iconName: trackRow.isCurrent && root.playbackState === "playing" ? "pause" : "play"
+                                Accessible.name: iconName === "pause" ? "暂停" : "播放"
+                                onClicked: {
+                                    root.selectTrack(trackRow.index, trackRow.trackId)
+                                    if (trackRow.isCurrent) {
+                                        Qt.callLater(() => root.togglePlaybackRequested())
+                                    } else {
+                                        const id = trackRow.trackId
+                                        Qt.callLater(() => root.trackActivated(id))
+                                    }
+                                }
+                            }
                         }
 
                         Item {
@@ -192,7 +265,7 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.alignment: Qt.AlignLeft
                                 text: trackRow.title
-                                color: root.theme.textColor
+                                color: trackRow.isCurrent ? root.theme.accentColor : root.theme.textColor
                                 elide: Text.ElideRight
                                 horizontalAlignment: Text.AlignLeft
                                 font.pixelSize: 14
@@ -227,6 +300,7 @@ Item {
                         }
                     }
 
+                    onClicked: root.selectTrack(trackRow.index, trackRow.trackId)
                     onDoubleClicked: {
                         const id = trackRow.trackId
                         Qt.callLater(() => root.trackActivated(id))

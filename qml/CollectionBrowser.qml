@@ -19,6 +19,18 @@ Item {
 
     property real savedGridY: 0
     property bool embedded: false
+    property bool compact: false
+    property string collectionIcon: "artist"
+    property string filterQuery: ""
+    property int currentTrackId: 0
+    property string playbackState: "stopped"
+    signal togglePlaybackRequested()
+
+    Shortcut {
+        sequences: ["Escape", "Alt+Left"]
+        enabled: root.showingDetail
+        onActivated: root.collectionClosed()
+    }
 
     signal collectionOpened(string collectionId)
     signal collectionClosed()
@@ -50,7 +62,7 @@ Item {
             }
 
             CoverImage {
-                visible: root.showingDetail
+                visible: root.showingDetail && !root.compact
                 displaySize: 52
                 theme: root.theme
                 source: root.selectedCover
@@ -91,7 +103,8 @@ Item {
             id: bodyLoader
             Layout.fillWidth: true
             Layout.fillHeight: true
-            sourceComponent: root.showingDetail ? detailComponent : gridComponent
+            sourceComponent: root.showingDetail ? detailComponent
+                : (root.compact ? listComponent : gridComponent)
         }
     }
 
@@ -195,7 +208,7 @@ Item {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.emptyTitle
+                    text: root.filterQuery.trim() ? "没有找到匹配的" + root.title : root.emptyTitle
                     color: root.theme.textColor
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
@@ -204,9 +217,99 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.emptySubtitle
+                    visible: !root.filterQuery.trim()
                     color: root.theme.mutedTextColor
                     font.pixelSize: 13
                 }
+            }
+        }
+    }
+
+    Component {
+        id: listComponent
+        Item {
+            ListView {
+                id: collectionList
+                objectName: "compactCollections"
+                anchors.fill: parent
+                clip: true
+                reuseItems: true
+                cacheBuffer: 392
+                model: root.collectionModel
+                boundsBehavior: Flickable.StopAtBounds
+                property bool scrollReady: false
+                Component.onCompleted: {
+                    contentY = Math.max(0, root.savedGridY)
+                    scrollReady = true
+                }
+                onContentYChanged: if (scrollReady) root.savedGridY = contentY
+                footer: Item { width: collectionList.width; height: 180 }
+                delegate: ItemDelegate {
+                    id: collectionRow
+                    required property string name
+                    required property string subtitle
+                    required property string collectionId
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 68
+                    padding: 12
+                    hoverEnabled: true
+                    Accessible.name: name
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: name + "\n" + subtitle
+                    background: RoundedRect {
+                        radius: 6
+                        color: collectionRow.hovered ? root.theme.hoverColor : "transparent"
+                        borderWidth: collectionRow.visualFocus ? 1 : 0
+                        borderColor: root.theme.accentColor
+                    }
+                    contentItem: RowLayout {
+                        spacing: 14
+                        Icon {
+                            name: root.collectionIcon
+                            size: 22
+                            color: root.theme.mutedTextColor
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            Text {
+                                Layout.fillWidth: true
+                                text: collectionRow.name
+                                color: root.theme.textColor
+                                font.pixelSize: 14
+                                font.weight: Font.Medium
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: collectionRow.subtitle
+                                color: root.theme.mutedTextColor
+                                font.pixelSize: 12
+                                elide: Text.ElideMiddle
+                            }
+                        }
+                        Icon { name: "chevronRight"; size: 16; color: root.theme.mutedTextColor }
+                    }
+                    onClicked: {
+                        const id = collectionRow.collectionId
+                        Qt.callLater(() => root.collectionOpened(id))
+                    }
+                }
+            }
+            PageScrollBar {
+                anchors.top: collectionList.top
+                anchors.right: collectionList.right
+                anchors.bottom: collectionList.bottom
+                theme: root.theme
+                scroller: collectionList
+            }
+            Text {
+                anchors.centerIn: parent
+                visible: collectionList.count === 0
+                text: root.filterQuery.trim() ? "没有找到匹配的" + root.title : root.emptyTitle
+                color: root.theme.mutedTextColor
+                font.pixelSize: 16
             }
         }
     }
@@ -217,6 +320,9 @@ Item {
         TrackTable {
             theme: root.theme
             trackModel: root.detailModel
+            currentTrackId: root.currentTrackId
+            playbackState: root.playbackState
+            onTogglePlaybackRequested: root.togglePlaybackRequested()
             sortable: false
             onTrackActivated: (trackId) => root.trackActivated(trackId)
         }

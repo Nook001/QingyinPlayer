@@ -10,6 +10,8 @@ Item {
     required property var theme
     required property var playerBackend
 
+    signal revealTrackRequested(int trackId)
+
     focus: true
 
     readonly property real progressInset: root.height / 2
@@ -78,6 +80,12 @@ Item {
 
     Slider {
         id: progressSlider
+        objectName: "playbackProgress"
+        hoverEnabled: true
+        HoverHandler { id: progressHover }
+        ToolTip.visible: hovered || pressed
+        ToolTip.text: root.formatTime(pressed ? value
+            : Math.max(0, Math.min(1, progressHover.point.position.x / width)) * to)
 
         anchors.left: progressEdge.left
         anchors.right: progressEdge.right
@@ -115,10 +123,14 @@ Item {
             implicitHeight: 16
         }
 
-        handle: Item {
-            implicitWidth: 1
-            implicitHeight: 1
-            visible: false
+        handle: RoundedRect {
+            width: 8
+            height: 8
+            x: progressSlider.visualPosition * (progressSlider.width - width)
+            y: (root.progressLineHeight - height) / 2
+            radius: 4
+            color: root.theme.accentColor
+            visible: progressSlider.hovered || progressSlider.pressed
         }
     }
 
@@ -139,6 +151,20 @@ Item {
     }
 
     RowLayout {
+        id: trackInfo
+        objectName: "currentTrackInfo"
+        activeFocusOnTab: root.playerBackend.current_track_id > 0
+        Accessible.role: Accessible.Button
+        Accessible.name: "在曲库中显示当前歌曲"
+        Keys.onReturnPressed: root.revealTrackRequested(root.playerBackend.current_track_id)
+        TapHandler {
+            enabled: root.playerBackend.current_track_id > 0
+            onTapped: root.revealTrackRequested(root.playerBackend.current_track_id)
+        }
+        HoverHandler { id: trackInfoHover; cursorShape: Qt.PointingHandCursor }
+        ToolTip.visible: trackInfoHover.hovered && root.playerBackend.current_track_id > 0
+        ToolTip.delay: 600
+        ToolTip.text: "在曲库中显示"
         anchors.left: parent.left
         anchors.leftMargin: 16
         anchors.right: transportColumn.left
@@ -233,6 +259,10 @@ Item {
             }
 
             FlatButton {
+                id: modeButton
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: Accessible.name
                 preferredWidth: 36
                 preferredHeight: 36
                 iconName: {
@@ -277,7 +307,12 @@ Item {
         z: 20
         clip: false
 
-        readonly property bool expanded: volumeHover.hovered || volumeSlider.pressed
+        property bool pinned: false
+        readonly property bool expanded: pinned || volumeHover.hovered || volumeSlider.pressed
+        Keys.onEscapePressed: {
+            pinned = false
+            volumeButton.forceActiveFocus()
+        }
 
         HoverHandler {
             id: volumeHover
@@ -285,11 +320,12 @@ Item {
 
         RoundedRect {
             id: volumePanel
+            objectName: "volumePanel"
             visible: volumeCluster.expanded
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             width: 32
-            height: 112
+            height: 144
             radius: 16
             color: root.theme.surfaceColor
             borderColor: root.theme.dividerColor
@@ -297,12 +333,13 @@ Item {
 
             Slider {
                 id: volumeSlider
+                objectName: "volumeSlider"
 
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.bottom: muteButton.top
                 anchors.topMargin: 10
-                anchors.bottomMargin: 10
+                anchors.bottomMargin: 6
                 width: 24
                 orientation: Qt.Vertical
                 from: 0
@@ -356,10 +393,24 @@ Item {
                     color: root.theme.accentColor
                 }
             }
+            FlatButton {
+                id: muteButton
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 5
+                anchors.horizontalCenter: parent.horizontalCenter
+                preferredWidth: 24
+                preferredHeight: 24
+                theme: root.theme
+                iconSize: 14
+                iconName: root.muted ? "volumeMuted" : "volume"
+                Accessible.name: root.muted ? "取消静音" : "静音"
+                onClicked: root.toggleMute()
+            }
         }
 
         FlatButton {
             id: volumeButton
+            objectName: "volumeButton"
             anchors.bottom: parent.bottom
             anchors.horizontalCenter: parent.horizontalCenter
             preferredWidth: 36
@@ -367,8 +418,12 @@ Item {
             iconName: root.muted ? "volumeMuted" : "volume"
             iconSize: 16
             theme: root.theme
-            Accessible.name: root.muted ? "取消静音" : "静音"
-            onClicked: root.toggleMute()
+            Accessible.name: "音量"
+            onClicked: {
+                volumeCluster.pinned = !volumeCluster.pinned
+                if (volumeCluster.pinned)
+                    volumeSlider.forceActiveFocus()
+            }
         }
     }
 }

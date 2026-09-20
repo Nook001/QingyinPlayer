@@ -34,9 +34,10 @@ TabBar {
             Accessible.name: text
 
             background: RoundedRect {
-                color: tab.checked || tab.hovered ? root.theme.hoverColor : "transparent"
+                color: tab.checked ? root.theme.subtleColor
+                    : (tab.hovered ? root.theme.hoverColor : "transparent")
                 radius: height / 2
-                borderWidth: tab.activeFocus ? 1 : 0
+                borderWidth: tab.visualFocus ? 1 : 0
                 borderColor: root.theme.accentColor
             }
 

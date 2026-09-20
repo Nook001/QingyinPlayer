@@ -43,6 +43,8 @@ Item {
             return "M18 6L6 18M6 6l12 12"
         case "search":
             return "M19 11a8 8 0 1 1-16 0 8 8 0 1 1 16 0M21 21l-4.35-4.35"
+        case "folder":
+            return "M3 5h6l2 2h10v12H3z"
         case "folderPlus":
             return "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2zM12 10v6M9 13h6"
         case "chevronLeft":

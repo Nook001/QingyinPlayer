@@ -79,6 +79,11 @@ Module {
         }
         Method { name: "clear_search" }
         Method {
+            name: "filter_collections"
+            Parameter { name: "mode"; type: "int" }
+            Parameter { name: "query"; type: "QString" }
+        }
+        Method {
             name: "set_sort"
             Parameter { name: "column"; type: "QString" }
         }
@@ -118,6 +123,7 @@ Module {
         exportMetaObjectRevisions: [256]
 
         Property { name: "playback_state"; type: "QString"; notify: "playback_changed" }
+        Property { name: "current_track_id"; type: "qlonglong"; notify: "playback_changed" }
         Property { name: "current_title"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_artist"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_cover"; type: "QString"; notify: "playback_changed" }
@@ -157,6 +163,8 @@ Module {
         prototype: "QAbstractListModel"
         exports: ["Qingyin/TrackListModel 1.0"]
         exportMetaObjectRevisions: [256]
+        Method { name: "index_of_track"; type: "int"; Parameter { name: "track_id"; type: "long" } }
+        Method { name: "track_id_at"; type: "long"; Parameter { name: "row"; type: "int" } }
         Property { name: "title"; type: "QString" }
         Property { name: "artist"; type: "QString" }
         Property { name: "album"; type: "QString" }
@@ -169,6 +177,8 @@ Module {
     Component {
         name: "DetailTrackModel"
         prototype: "QAbstractListModel"
+        Method { name: "index_of_track"; type: "int"; Parameter { name: "track_id"; type: "long" } }
+        Method { name: "track_id_at"; type: "long"; Parameter { name: "row"; type: "int" } }
         Property { name: "title"; type: "QString" }
         Property { name: "artist"; type: "QString" }
         Property { name: "album"; type: "QString" }

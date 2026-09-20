@@ -27,6 +27,13 @@ Item {
 
     ListModel {
         id: tracks
+        function index_of_track(id) {
+            for (let i = 0; i < count; ++i)
+                if (get(i).trackId === id) return i
+            return -1
+        }
+        function track_id_at(row) { return row >= 0 && row < count ? get(row).trackId : 0 }
+
         ListElement { title: "B"; artist: "乙"; album: "二"; duration: "0:10"; cover: ""; trackId: 2 }
         ListElement { title: "A"; artist: "甲"; album: "一"; duration: "0:09"; cover: ""; trackId: 1 }
     }
@@ -50,6 +57,7 @@ Item {
     QtObject {
         id: playerMock
         property string current_title: "A"
+        property int current_track_id: 1
         property string current_artist: "甲"
         property string current_cover: ""
         property string playback_error: ""
@@ -85,6 +93,36 @@ Item {
         name: "TrackTableReuseAndActivation"
         when: windowShown
 
+        function test_selection_keyboard_and_reorder() {
+            const row = findChild(table, "trackRow2")
+            verify(row)
+            root.activatedId = 0
+            mouseClick(row, row.width / 2, row.height / 2)
+            compare(table.selectedTrackId, 2)
+            compare(root.activatedId, 0)
+            tracks.move(0, 1, 1)
+            wait(0)
+            verify(findChild(table, "trackRow2").isSelected)
+            keyClick(Qt.Key_Up)
+            compare(table.selectedTrackId, 1)
+            keyClick(Qt.Key_Return)
+            tryCompare(root, "activatedId", 1)
+            tracks.move(1, 0, 1)
+        }
+
+        function test_playback_marker_survives_pause() {
+            table.currentTrackId = 2
+            table.playbackState = "playing"
+            const row = findChild(table, "trackRow2")
+            verify(row.isCurrent)
+            compare(findChild(table, "rowPlayButton2").iconName, "pause")
+            table.playbackState = "paused"
+            verify(row.isCurrent)
+            compare(findChild(table, "rowPlayButton2").iconName, "play")
+            table.playbackState = "stopped"
+            verify(!row.isCurrent)
+        }
+
         function test_double_click_uses_track_id() {
             compare(table.count, 2)
             const row = table.children[0].children[1]
@@ -100,6 +138,17 @@ Item {
     TestCase {
         name: "PlayerBarSeek"
         when: windowShown
+
+        function test_volume_panel_opens_from_keyboard() {
+            const button = findChild(bar, "volumeButton")
+            button.forceActiveFocus()
+            keyClick(Qt.Key_Space)
+            const slider = findChild(bar, "volumeSlider")
+            tryVerify(() => slider.visible && slider.activeFocus)
+            keyClick(Qt.Key_Escape)
+            mouseMove(root, 0, 0)
+            tryVerify(() => !findChild(bar, "volumePanel").visible)
+        }
 
         function test_keyboard_seek_steps_five_seconds() {
             bar.forceActiveFocus()

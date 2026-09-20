@@ -10,7 +10,16 @@ Rectangle {
     color: theme.backgroundColor
 
     Theme { id: theme; darkTheme: false }
-    ListModel { id: tracks }
+    ListModel {
+        id: tracks
+        function index_of_track(id) {
+            for (let i = 0; i < count; ++i)
+                if (get(i).trackId === id) return i
+            return -1
+        }
+        function track_id_at(row) { return row >= 0 && row < count ? get(row).trackId : 0 }
+
+    }
     ListModel {
         id: collections
         ListElement { name: "现场"; subtitle: "2 首歌曲 · /music/现场"; cover: ""; collectionId: "directory:/music/现场" }
@@ -50,6 +59,12 @@ Rectangle {
         property string watch_status: ""
         property string openedDirectory: ""
         property int playedTrack: 0
+        property var collectionQueries: ["", "", "", ""]
+        function filter_collections(mode, query) {
+            const queries = collectionQueries.slice()
+            queries[mode] = query
+            collectionQueries = queries
+        }
         function clear_search() { search_query = "" }
         function search_tracks(query) { search_query = query }
         function open_directory(id) {
@@ -73,6 +88,7 @@ Rectangle {
         property var page
 
         function init() {
+            failOnWarning(/.*/)
             session.search_query = ""
             session.selected_directory = ""
             session.openedDirectory = ""
@@ -108,7 +124,8 @@ Rectangle {
             table.restoreContentY(180)
             tryCompare(page, "savedContentY", 180)
             selectView(1)
-            verify(!field.visible)
+            verify(field.visible)
+            compare(field.text, "")
             selectView(0)
             compare(field.text, "歌曲")
             compare(findChild(page, "allMusicTable").contentY, 180)
@@ -137,6 +154,48 @@ Rectangle {
             verify(restored)
             compare(findChild(restored, "libraryViewSwitch").currentIndex, 2)
             verify(findChild(restored, "albumBrowser") !== null)
+        }
+
+        function test_queries_remain_independent_before_debounce() {
+            const field = findChild(page, "librarySearchField")
+            const values = ["歌曲", "歌手甲", "唱片乙", "/music/现场"]
+            for (let i = 0; i < 4; ++i) {
+                selectView(i)
+                verify(field.visible)
+                field.text = values[i]
+            }
+            selectView(0)
+            compare(session.search_query, values[0])
+            for (let i = 1; i < 4; ++i) {
+                selectView(i)
+                compare(field.text, values[i])
+                compare(session.collectionQueries[i], values[i])
+            }
+            field.clear()
+            compare(session.collectionQueries[3], "")
+            selectView(2)
+            compare(field.text, values[2])
+        }
+
+        function test_search_shortcut_and_directory_list() {
+            selectView(3)
+            verify(findChild(page, "compactCollections") !== null)
+            keyClick(Qt.Key_F, Qt.ControlModifier)
+            tryVerify(() => findChild(page, "librarySearchField").activeFocus)
+            selectView(1)
+            verify(findChild(page, "compactCollections") !== null)
+        }
+
+        function test_reveal_current_track_leaves_collection_and_clears_search() {
+            const field = findChild(page, "librarySearchField")
+            field.text = "过滤"
+            selectView(2)
+            page.revealTrack(80)
+            compare(page.browseMode, 0)
+            compare(field.text, "")
+            compare(session.search_query, "")
+            tryVerify(() => findChild(page, "allMusicTable").selectedTrackId === 80)
+            verify(findChild(page, "allMusicTable").contentY > 0)
         }
     }
 }

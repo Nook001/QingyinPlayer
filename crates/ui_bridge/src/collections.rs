@@ -49,13 +49,60 @@ fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
 pub struct CollectionModel {
     base: qt_base_class!(trait QAbstractListModel),
     entries: Vec<CollectionEntry>,
+    search_terms: Vec<String>,
+    visible_rows: Vec<usize>,
+    query: String,
 }
 
 impl CollectionModel {
     pub fn reset(&mut self, entries: Vec<CollectionEntry>) {
         self.begin_reset_model();
+        self.search_terms = entries
+            .iter()
+            .map(|entry| {
+                let mut text = entry.name.clone();
+                if let Some(path) = entry.id.strip_prefix("directory:") {
+                    text.push_str(path);
+                } else if entry.id.starts_with("album:") {
+                    for track in &entry.tracks {
+                        for artist in track
+                            .metadata
+                            .album_artist
+                            .iter()
+                            .chain(&track.metadata.artists)
+                        {
+                            text.push(' ');
+                            text.push_str(artist);
+                        }
+                    }
+                }
+                text.to_lowercase()
+            })
+            .collect();
         self.entries = entries;
+        self.update_visible_rows();
         self.end_reset_model();
+    }
+
+    pub fn set_filter(&mut self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        if self.query == query {
+            return false;
+        }
+        self.begin_reset_model();
+        self.query = query;
+        self.update_visible_rows();
+        self.end_reset_model();
+        true
+    }
+
+    fn update_visible_rows(&mut self) {
+        self.visible_rows = self
+            .search_terms
+            .iter()
+            .enumerate()
+            .filter_map(|(row, text)| text.contains(&self.query).then_some(row))
+            .collect();
     }
 
     #[must_use]
@@ -70,6 +117,23 @@ impl CollectionModel {
 pub struct TrackListModel {
     base: qt_base_class!(trait QAbstractListModel),
     tracks: Vec<TrackSnapshot>,
+    index_of_track: qt_method!(
+        fn index_of_track(&self, track_id: i64) -> i32 {
+            self.tracks
+                .iter()
+                .position(|track| track.id() == track_id)
+                .and_then(|row| i32::try_from(row).ok())
+                .unwrap_or(-1)
+        }
+    ),
+    track_id_at: qt_method!(
+        fn track_id_at(&self, row: i32) -> i64 {
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| self.tracks.get(row))
+                .map_or(0, TrackSnapshot::id)
+        }
+    ),
 }
 
 impl TrackListModel {
@@ -154,6 +218,23 @@ impl TrackListModel {
 pub struct DetailTrackModel {
     base: qt_base_class!(trait QAbstractListModel),
     tracks: Vec<TrackSnapshot>,
+    index_of_track: qt_method!(
+        fn index_of_track(&self, track_id: i64) -> i32 {
+            self.tracks
+                .iter()
+                .position(|track| track.id() == track_id)
+                .and_then(|row| i32::try_from(row).ok())
+                .unwrap_or(-1)
+        }
+    ),
+    track_id_at: qt_method!(
+        fn track_id_at(&self, row: i32) -> i64 {
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| self.tracks.get(row))
+                .map_or(0, TrackSnapshot::id)
+        }
+    ),
 }
 
 impl DetailTrackModel {
@@ -221,13 +302,14 @@ impl QAbstractListModel for DetailTrackModel {
 
 impl QAbstractListModel for CollectionModel {
     fn row_count(&self) -> i32 {
-        i32::try_from(self.entries.len()).unwrap_or(i32::MAX)
+        i32::try_from(self.visible_rows.len()).unwrap_or(i32::MAX)
     }
 
     fn data(&self, index: QModelIndex, role: i32) -> QVariant {
         let Some(entry) = usize::try_from(index.row())
             .ok()
-            .and_then(|row| self.entries.get(row))
+            .and_then(|row| self.visible_rows.get(row))
+            .and_then(|&row| self.entries.get(row))
         else {
             return QVariant::default();
         };
@@ -259,6 +341,50 @@ impl QAbstractListModel for CollectionModel {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn collection_filters_use_their_scope_and_survive_refresh() {
+        let mut metadata = TrackMetadata::from_display(
+            "/music/Live/song.flac",
+            "Song",
+            Some("夏天".into()),
+            vec!["乐队".into()],
+            None,
+        );
+        metadata.album_artist = Some("Various Artists".into());
+        let tracks = vec![TrackSnapshot::from_metadata(metadata)];
+        let mut model = CollectionModel::default();
+        model.reset(qingyin_library::aggregate_albums(&tracks));
+        assert!(model.set_filter("VARIOUS"));
+        assert_eq!(model.row_count(), 1);
+        model.set_filter("不存在");
+        assert_eq!(model.row_count(), 0);
+        model.reset(qingyin_library::aggregate_albums(&tracks));
+        assert_eq!(model.row_count(), 0);
+        model.set_filter("  夏天  ");
+        assert_eq!(model.row_count(), 1);
+        assert_eq!(
+            model
+                .entry_by_id("album:夏天\u{1f}various artists")
+                .unwrap()
+                .track_count,
+            1
+        );
+
+        model.reset(qingyin_library::aggregate_directories(&tracks));
+        model.set_filter("/music/live");
+        assert_eq!(model.row_count(), 1);
+        model.set_filter("歌曲");
+        assert_eq!(model.row_count(), 0);
+        model.set_filter("");
+        assert_eq!(model.row_count(), 1);
+
+        model.reset(qingyin_library::aggregate_artists(&tracks));
+        model.set_filter("夏天");
+        assert_eq!(model.row_count(), 0);
+        model.set_filter("乐队");
+        assert_eq!(model.row_count(), 1);
+    }
 
     #[test]
     fn library_and_detail_models_share_track_roles() {

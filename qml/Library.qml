@@ -13,6 +13,14 @@ Item {
     property string pendingQuery: ""
     property real savedContentY: 0
     property int browseMode: 0
+    property int currentTrackId: 0
+    property string playbackState: "stopped"
+    property var viewQueries: ["", "", "", ""]
+    property int activeBrowseMode: 0
+    property bool restoringSearch: false
+    signal settingsRequested()
+    signal trackRevealRequested(int trackId)
+    signal togglePlaybackRequested()
     property real artistGridY: 0
     property real albumGridY: 0
     property real directoryGridY: 0
@@ -43,25 +51,66 @@ Item {
         return scan || watch
     }
 
+    function revealTrack(trackId) {
+        root.browseMode = 0
+        searchField.clear()
+        root.commitPendingQuery()
+        Qt.callLater(() => root.trackRevealRequested(trackId))
+    }
+
+    function commitQuery(mode, text) {
+        const queries = root.viewQueries.slice()
+        queries[mode] = text
+        root.viewQueries = queries
+        const query = text.trim()
+        if (mode === 0) {
+            root.pendingQuery = text
+            if (query === "")
+                root.session.clear_search()
+            else
+                root.session.search_tracks(query)
+        } else {
+            root.session.filter_collections(mode, query)
+        }
+    }
+
     function commitPendingQuery() {
-        const query = searchField.text.trim()
-        root.pendingQuery = query
-        if (query === "")
-            root.session.clear_search()
-        else
-            root.session.search_tracks(query)
+        root.commitQuery(root.activeBrowseMode, searchField.text)
+    }
+
+    function restoreSearch() {
+        root.restoringSearch = true
+        searchField.text = root.browseMode === 0 ? root.pendingQuery : root.viewQueries[root.browseMode]
+        root.restoringSearch = false
+        root.activeBrowseMode = root.browseMode
     }
 
     Component.onCompleted: {
+        root.restoreSearch()
         root.statusReady = true
-        if (root.pendingQuery !== "")
-            searchField.text = root.pendingQuery
+        root.commitPendingQuery()
     }
 
     Component.onDestruction: {
-        root.pendingQuery = searchField.text
-        if (searchField.text.trim() !== String(root.session.search_query).trim())
-            root.commitPendingQuery()
+        searchDelay.stop()
+        root.commitPendingQuery()
+    }
+
+    onBrowseModeChanged: {
+        if (!root.statusReady)
+            return
+        searchDelay.stop()
+        root.commitPendingQuery()
+        root.restoreSearch()
+        root.commitPendingQuery()
+    }
+
+    Shortcut {
+        sequences: [StandardKey.Find]
+        onActivated: {
+            searchField.forceActiveFocus()
+            searchField.selectAll()
+        }
     }
 
     Timer {
@@ -136,15 +185,25 @@ Item {
                 visible: root.headerStatusText === ""
             }
 
-            AccentButton {
+            FlatButton {
                 theme: root.theme
-                text: "选择目录"
-                iconName: "folderPlus"
+                text: "添加目录"
+                fontPixelSize: 13
+                contentAlignment: Text.AlignHCenter
                 preferredWidth: 108
                 preferredHeight: 32
-                cornerRadius: 16
                 enabled: !root.session.busy
                 onClicked: folderDialog.open()
+            }
+
+            FlatButton {
+                objectName: "librarySettingsButton"
+                theme: root.theme
+                preferredWidth: 32
+                preferredHeight: 32
+                iconName: "settings"
+                Accessible.name: "设置"
+                onClicked: root.settingsRequested()
             }
         }
 
@@ -164,20 +223,22 @@ Item {
             TextField {
                 id: searchField
                 objectName: "librarySearchField"
-                visible: root.browseMode === 0
 
                 Layout.preferredWidth: 220
                 Layout.maximumWidth: 260
                 Layout.preferredHeight: 32
-                placeholderText: "搜索歌曲"
+                placeholderText: ["搜索歌曲", "搜索歌手", "搜索专辑或歌手", "搜索文件夹或路径"][root.browseMode]
+                placeholderTextColor: root.theme.mutedTextColor
                 leftPadding: 32
                 rightPadding: searchField.text !== "" ? 34 : 12
                 font.pixelSize: 13
                 color: root.theme.textColor
                 onTextChanged: {
+                    if (root.restoringSearch)
+                        return
                     if (text.trim() === "") {
                         searchDelay.stop()
-                        root.session.clear_search()
+                        root.commitPendingQuery()
                     } else {
                         searchDelay.restart()
                     }
@@ -253,6 +314,10 @@ Item {
     Component {
         id: allMusicView
         Item {
+            Connections {
+                target: root
+                function onTrackRevealRequested(trackId) { trackTable.revealTrack(trackId) }
+            }
             TrackTable {
                 id: trackTable
                 objectName: "allMusicTable"
@@ -264,6 +329,9 @@ Item {
                 anchors.fill: parent
                 theme: root.theme
                 trackModel: root.session.library_model
+                currentTrackId: root.currentTrackId
+                playbackState: root.playbackState
+                onTogglePlaybackRequested: root.togglePlaybackRequested()
                 sortColumn: String(root.session.sort_column_name)
                 sortAscending: root.session.sort_ascending
                 visible: count > 0 && !root.waitingForSearch
@@ -326,6 +394,10 @@ Item {
         id: artistView
         Artist {
             objectName: "artistBrowser"
+            currentTrackId: root.currentTrackId
+            playbackState: root.playbackState
+            filterQuery: root.viewQueries[root.browseMode]
+            onTogglePlaybackRequested: root.togglePlaybackRequested()
             theme: root.theme
             libraryModel: root.session
             embedded: true
@@ -338,6 +410,10 @@ Item {
         id: albumView
         Album {
             objectName: "albumBrowser"
+            currentTrackId: root.currentTrackId
+            playbackState: root.playbackState
+            filterQuery: root.viewQueries[root.browseMode]
+            onTogglePlaybackRequested: root.togglePlaybackRequested()
             theme: root.theme
             libraryModel: root.session
             embedded: true
@@ -350,9 +426,15 @@ Item {
         id: directoryView
         CollectionBrowser {
             objectName: "directoryBrowser"
+            currentTrackId: root.currentTrackId
+            playbackState: root.playbackState
+            filterQuery: root.viewQueries[root.browseMode]
+            onTogglePlaybackRequested: root.togglePlaybackRequested()
             theme: root.theme
             embedded: true
             title: "目录"
+            compact: true
+            collectionIcon: "folder"
             emptyTitle: "还没有音乐目录"
             emptySubtitle: "添加音乐后，目录将显示在这里"
             collectionModel: root.session.directory_model

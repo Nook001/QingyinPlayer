@@ -233,6 +233,30 @@ pub struct LibrarySession {
             self.clear_search_internal();
         }
     ),
+    filter_collections: qt_method!(
+        fn filter_collections(&mut self, mode: i32, query: QString) {
+            let changed = match mode {
+                1 => self
+                    .artist_model
+                    .borrow_mut()
+                    .set_filter(&query.to_string()),
+                2 => self.album_model.borrow_mut().set_filter(&query.to_string()),
+                3 => self
+                    .directory_model
+                    .borrow_mut()
+                    .set_filter(&query.to_string()),
+                _ => false,
+            };
+            if changed {
+                match mode {
+                    1 => self.close_artist_internal(),
+                    2 => self.close_album_internal(),
+                    3 => self.close_directory_internal(),
+                    _ => {}
+                }
+            }
+        }
+    ),
     set_sort: qt_method!(
         #[allow(clippy::needless_pass_by_value)]
         fn set_sort(&mut self, column: QString) {
