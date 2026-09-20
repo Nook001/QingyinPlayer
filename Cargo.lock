@@ -1082,6 +1082,7 @@ dependencies = [
  "qingyin-storage",
  "qmetaobject",
  "qttypes",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
  "url",

@@ -15,6 +15,7 @@ qingyin-metadata = { path = "../metadata" }
 qingyin-player = { path = "../player" }
 qingyin-storage = { path = "../storage" }
 qttypes = { version = "0.2.12", features = ["qtquick"] }
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true

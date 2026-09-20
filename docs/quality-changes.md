@@ -129,7 +129,7 @@
 - [x] **Q-31** 中 · 扫描 + 监听回调收到独立的 library session 类型  
   完成：`queued_callback` 不再直接把 IO 细节塞进巨型 `AppBridge` 方法列表。
 
-- [ ] **Q-32** 中 · 工作线程回调携带 `thiserror` 枚举，而不是 `String`  
+- [x] **Q-32** 中 · 工作线程回调携带 `thiserror` 枚举，而不是 `String`  
   完成：扫描/搜索失败在 Rust 侧可匹配，QML 仍显示中文文案。
 
 - [ ] **Q-33** 大 · 校对键从 `TrackMetadata` 拆到装入 UI 快照时计算  

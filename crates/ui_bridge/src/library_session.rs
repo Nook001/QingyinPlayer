@@ -8,13 +8,15 @@ use std::sync::Arc;
 
 use image::{ImageFormat, ImageReader, Limits};
 use qingyin_library::{
-    CollectionEntry, LibraryWatcher, MusicLibrary, ScanEvent, WatchSummary, aggregate_albums,
-    aggregate_artists, is_library_track, prune_unwatched_tracks, watch_directories,
+    CollectionEntry, LibraryError, LibraryWatcher, MusicLibrary, ScanEvent, WatchSummary,
+    aggregate_albums, aggregate_artists, is_library_track, prune_unwatched_tracks,
+    watch_directories,
 };
 use qingyin_metadata::{CoverArt, TrackMetadata, read_cover};
-use qingyin_storage::Database;
+use qingyin_storage::{Database, StorageError};
 use qmetaobject::QUrl;
 use qmetaobject::prelude::*;
+use thiserror::Error;
 use tracing::warn;
 
 use crate::collections::{CollectionModel, DetailTrackModel, TrackListModel};
@@ -37,6 +39,42 @@ struct ScanResult {
 #[derive(Debug)]
 struct SearchResult {
     tracks: Vec<TrackMetadata>,
+}
+
+#[derive(Debug, Error)]
+enum LibraryIoError {
+    #[error("unable to determine user data directory")]
+    MissingDataHome,
+    #[error("failed to create library directory {path}: {source}")]
+    CreateDataDir {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to open library database: {0}")]
+    OpenDatabase(#[source] StorageError),
+    #[error("failed to list library tracks: {0}")]
+    ListTracks(#[source] StorageError),
+    #[error("failed to search library tracks: {0}")]
+    SearchTracks(#[source] StorageError),
+    #[error("failed to prune unwatched tracks: {0}")]
+    Prune(#[source] LibraryError),
+    #[error("failed to start library restore thread")]
+    RestoreSpawn,
+}
+
+impl LibraryIoError {
+    fn to_user_message(&self) -> String {
+        match self {
+            Self::MissingDataHome => "无法确定用户数据目录".into(),
+            Self::CreateDataDir { .. } => "无法创建曲库目录".into(),
+            Self::OpenDatabase(_) => "无法打开曲库".into(),
+            Self::ListTracks(_) => "无法读取曲库".into(),
+            Self::SearchTracks(_) => "搜索失败".into(),
+            Self::Prune(_) => "无法更新曲库".into(),
+            Self::RestoreSpawn => "无法启动曲库恢复".into(),
+        }
+    }
 }
 
 type PlayListed = Box<dyn Fn(Vec<TrackMetadata>, Vec<String>, i32)>;
@@ -115,7 +153,7 @@ pub struct LibrarySession {
             }
             let session = QPointer::from(&*self);
             let apply_result =
-                qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
+                qmetaobject::queued_callback(move |result: Result<ScanResult, LibraryIoError>| {
                     let Some(session) = session.as_pinned() else {
                         return;
                     };
@@ -130,7 +168,7 @@ pub struct LibrarySession {
                             session.apply_scan_result(result);
                             session.ensure_watcher();
                         }
-                        Err(error) => session.set_scan_error(error),
+                        Err(error) => session.apply_scan_failure(&error),
                     }
                 });
 
@@ -257,14 +295,14 @@ impl LibrarySession {
 
         let session = QPointer::from(&*self);
         let apply_result =
-            qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
+            qmetaobject::queued_callback(move |result: Result<ScanResult, LibraryIoError>| {
                 let Some(session) = session.as_pinned() else {
                     return;
                 };
                 let mut session = session.borrow_mut();
                 match result {
                     Ok(result) => session.apply_scan_result(result),
-                    Err(error) => session.set_scan_error(error),
+                    Err(error) => session.apply_scan_failure(&error),
                 }
                 let directories = session.music_directories.clone();
                 if !directories.is_empty() {
@@ -277,7 +315,7 @@ impl LibrarySession {
             .spawn(move || apply_result(load_stored_library(&directories)))
         {
             warn!(%error, "failed to start library restore");
-            self.set_scan_error("无法启动曲库恢复".into());
+            self.apply_scan_failure(&LibraryIoError::RestoreSpawn);
         }
     }
 
@@ -305,6 +343,16 @@ impl LibrarySession {
         true
     }
 
+    fn apply_scan_failure(&mut self, error: &LibraryIoError) {
+        warn!(%error, "library scan failed");
+        self.set_scan_error(error.to_user_message());
+    }
+
+    fn apply_search_failure(&mut self, error: &LibraryIoError) {
+        warn!(%error, "library search failed");
+        self.search_status = error.to_user_message().into();
+    }
+
     fn set_scan_error(&mut self, error: String) {
         self.scan_status = error.into();
         self.scan_status_changed();
@@ -326,7 +374,7 @@ impl LibrarySession {
 
         let session = QPointer::from(&*self);
         let apply_result =
-            qmetaobject::queued_callback(move |result: Result<SearchResult, String>| {
+            qmetaobject::queued_callback(move |result: Result<SearchResult, LibraryIoError>| {
                 let Some(session) = session.as_pinned() else {
                     return;
                 };
@@ -351,7 +399,7 @@ impl LibrarySession {
                         );
                         session.search_status = format!("找到 {count} 首歌曲").into();
                     }
-                    Err(error) => session.search_status = error.into(),
+                    Err(error) => session.apply_search_failure(&error),
                 }
                 session.search_changed();
             });
@@ -391,9 +439,12 @@ impl LibrarySession {
         if directories.is_empty() {
             return;
         }
-        let Ok(database_path) = database_path() else {
-            warn!("unable to determine library database path for watcher");
-            return;
+        let database_path = match database_path() {
+            Ok(path) => path,
+            Err(error) => {
+                warn!(%error, "unable to determine library database path for watcher");
+                return;
+            }
         };
         let session = QPointer::from(&*self);
         let apply_batch = qmetaobject::queued_callback(move |summary: WatchSummary| {
@@ -446,7 +497,7 @@ impl LibrarySession {
                     apply_result(scan_result_with_collections(tracks, cover_urls, status));
                 });
             }
-            Err(error) => self.set_scan_error(error),
+            Err(error) => self.apply_scan_failure(&error),
         }
     }
 
@@ -473,7 +524,7 @@ impl LibrarySession {
 
         let session = QPointer::from(&*self);
         let apply_result =
-            qmetaobject::queued_callback(move |result: Result<ScanResult, String>| {
+            qmetaobject::queued_callback(move |result: Result<ScanResult, LibraryIoError>| {
                 let Some(session) = session.as_pinned() else {
                     return;
                 };
@@ -482,7 +533,7 @@ impl LibrarySession {
                 session.scanning_changed();
                 match result {
                     Ok(result) => session.apply_scan_result(result),
-                    Err(error) => session.set_scan_error(error),
+                    Err(error) => session.apply_scan_failure(&error),
                 }
             });
         std::thread::spawn(move || {
@@ -636,15 +687,18 @@ impl LibrarySession {
     }
 }
 
-fn scan_music_directory(path: &Path, library_roots: &[PathBuf]) -> Result<ScanResult, String> {
+fn scan_music_directory(
+    path: &Path,
+    library_roots: &[PathBuf],
+) -> Result<ScanResult, LibraryIoError> {
     scan_music_directories(&[path.to_path_buf()], library_roots)
 }
 
 fn scan_music_directories(
     directories: &[PathBuf],
     library_roots: &[PathBuf],
-) -> Result<ScanResult, String> {
-    let mut database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+) -> Result<ScanResult, LibraryIoError> {
+    let mut database = Database::open(database_path()?).map_err(LibraryIoError::OpenDatabase)?;
     let mut library = MusicLibrary::default();
     let mut imported = 0;
     let mut unchanged = 0;
@@ -669,7 +723,7 @@ fn scan_music_directories(
             }
         }
     }
-    prune_unwatched_tracks(&database, library_roots).map_err(|error| error.to_string())?;
+    prune_unwatched_tracks(&database, library_roots).map_err(LibraryIoError::Prune)?;
     let tracks = listed_tracks(&database)?;
     let cover_urls = existing_cover_urls(&tracks, false);
     Ok(scan_result_with_collections(
@@ -679,9 +733,9 @@ fn scan_music_directories(
     ))
 }
 
-fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, String> {
-    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
-    prune_unwatched_tracks(&database, roots).map_err(|error| error.to_string())?;
+fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, LibraryIoError> {
+    let database = Database::open(database_path()?).map_err(LibraryIoError::OpenDatabase)?;
+    prune_unwatched_tracks(&database, roots).map_err(LibraryIoError::Prune)?;
     let tracks = listed_tracks(&database)?;
     let cover_urls = existing_cover_urls(&tracks, true);
     let status = if tracks.is_empty() {
@@ -708,14 +762,14 @@ fn scan_result_with_collections(
     }
 }
 
-fn load_stored_tracks() -> Result<Vec<TrackMetadata>, String> {
-    listed_tracks(&Database::open(database_path()?).map_err(|error| error.to_string())?)
+fn load_stored_tracks() -> Result<Vec<TrackMetadata>, LibraryIoError> {
+    listed_tracks(&Database::open(database_path()?).map_err(LibraryIoError::OpenDatabase)?)
 }
 
-fn listed_tracks(database: &Database) -> Result<Vec<TrackMetadata>, String> {
+fn listed_tracks(database: &Database) -> Result<Vec<TrackMetadata>, LibraryIoError> {
     database
         .list_tracks()
-        .map_err(|error| error.to_string())
+        .map_err(LibraryIoError::ListTracks)
         .map(|tracks| {
             tracks
                 .into_iter()
@@ -774,11 +828,11 @@ fn watch_status(summary: &WatchSummary) -> String {
     status
 }
 
-fn search_database(query: &str, roots: &[PathBuf]) -> Result<SearchResult, String> {
-    let database = Database::open(database_path()?).map_err(|error| error.to_string())?;
+fn search_database(query: &str, roots: &[PathBuf]) -> Result<SearchResult, LibraryIoError> {
+    let database = Database::open(database_path()?).map_err(LibraryIoError::OpenDatabase)?;
     let tracks = database
         .search_tracks(query, SEARCH_RESULT_LIMIT)
-        .map_err(|error| error.to_string())?
+        .map_err(LibraryIoError::SearchTracks)?
         .into_iter()
         .map(|track| track.metadata)
         .filter(|track| is_library_track(&track.path, roots))
@@ -901,13 +955,16 @@ fn cache_directory() -> Option<PathBuf> {
     Some(directory)
 }
 
-fn database_path() -> Result<PathBuf, String> {
+fn database_path() -> Result<PathBuf, LibraryIoError> {
     let data_home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .ok_or_else(|| "无法确定用户数据目录".to_owned())?;
+        .ok_or(LibraryIoError::MissingDataHome)?;
     let directory = data_home.join("qingyin");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&directory).map_err(|source| LibraryIoError::CreateDataDir {
+        path: directory.clone(),
+        source,
+    })?;
     Ok(directory.join("library.sqlite3"))
 }
 
@@ -1010,6 +1067,24 @@ mod tests {
         assert!(session.add_music_directory(PathBuf::from("/music")));
         assert!(!session.add_music_directory(PathBuf::from("/music")));
         assert_eq!(session.music_directories(), &[PathBuf::from("/music")]);
+    }
+
+    #[test]
+    fn scan_and_search_errors_are_matchable_with_chinese_messages() {
+        let scan = LibraryIoError::OpenDatabase(StorageError::DurationOverflow);
+        let search = LibraryIoError::SearchTracks(StorageError::DurationOverflow);
+        assert!(matches!(scan, LibraryIoError::OpenDatabase(_)));
+        assert!(matches!(search, LibraryIoError::SearchTracks(_)));
+        assert_eq!(scan.to_user_message(), "无法打开曲库");
+        assert_eq!(search.to_user_message(), "搜索失败");
+        assert_eq!(
+            LibraryIoError::MissingDataHome.to_user_message(),
+            "无法确定用户数据目录"
+        );
+        assert_eq!(
+            LibraryIoError::RestoreSpawn.to_user_message(),
+            "无法启动曲库恢复"
+        );
     }
 
     fn test_track(title: &str, album: &str, duration: u64) -> TrackMetadata {
