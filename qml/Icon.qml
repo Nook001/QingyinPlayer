@@ -28,9 +28,9 @@ Item {
         case "settings":
             return "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM15 12a3 3 0 1 1-6 0 3 3 0 1 1 6 0"
         case "play":
-            return "M8 5.2v13.6L19.5 12z"
+            return "M9.5 6.2v11.6L18.5 12z"
         case "pause":
-            return "M6 5h4.2v14H6zM13.8 5H18v14h-4.2z"
+            return "M7 6h3.5v12H7zM13.5 6H17v12h-3.5z"
         case "skipBack":
             return "M6 5v14M18 5v14L8 12z"
         case "skipForward":
@@ -55,16 +55,19 @@ Item {
     }
 
     Shape {
-        anchors.fill: parent
+        width: 24
+        height: 24
+        scale: root.size / 24
+        transformOrigin: Item.TopLeft
         preferredRendererType: Shape.CurveRenderer
         antialiasing: true
         vendorExtensionsEnabled: true
-        fillMode: Shape.PreserveAspectFit
+        fillMode: Shape.NoResize
 
         ShapePath {
             fillColor: root.filled ? root.color : "transparent"
-            strokeColor: root.color
-            strokeWidth: root.filled ? 0.25 : 1.75
+            strokeColor: root.filled ? "transparent" : root.color
+            strokeWidth: root.filled ? 0 : 1.75
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
             fillRule: ShapePath.WindingFill

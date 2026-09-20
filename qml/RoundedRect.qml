@@ -27,6 +27,8 @@ Item {
             joinStyle: ShapePath.RoundJoin
 
             PathRectangle {
+                x: 0
+                y: 0
                 width: shape.width
                 height: shape.height
                 radius: Math.min(root.radius, shape.width / 2, shape.height / 2)

@@ -13,6 +13,8 @@ Item {
     property string sortColumn
     property bool sortAscending: true
     property real savedContentY: 0
+    property int endSpacerCount: 3
+    readonly property int rowHeight: 58
     readonly property alias count: trackList.count
     readonly property alias contentY: trackList.contentY
 
@@ -98,6 +100,11 @@ Item {
             boundsBehavior: Flickable.StopAtBounds
             model: root.trackModel
             spacing: 2
+            footerPositioning: ListView.InlineFooter
+            footer: Item {
+                width: trackList.width
+                height: root.endSpacerCount * (root.rowHeight + trackList.spacing)
+            }
 
             delegate: ItemDelegate {
                 id: trackRow

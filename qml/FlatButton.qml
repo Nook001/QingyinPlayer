@@ -18,10 +18,17 @@ Button {
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
     padding: 0
+    leftInset: 0
+    rightInset: 0
+    topInset: 0
+    bottomInset: 0
     flat: true
     hoverEnabled: true
 
     contentItem: Item {
+        implicitWidth: root.preferredWidth
+        implicitHeight: root.preferredHeight
+
         Icon {
             anchors.centerIn: parent
             visible: root.iconName !== ""
@@ -43,14 +50,22 @@ Button {
         }
     }
 
-    background: RoundedRect {
-        radius: root.emphasized ? height / 2 : 6
-        color: {
-            if (root.emphasized && root.enabled)
-                return root.down ? root.theme.accentPressedColor : root.theme.accentColor
-            if (root.hovered && root.enabled)
-                return root.theme.hoverColor
-            return "transparent"
+    background: Item {
+        implicitWidth: root.preferredWidth
+        implicitHeight: root.preferredHeight
+
+        RoundedRect {
+            anchors.centerIn: parent
+            width: root.emphasized ? Math.min(parent.width, parent.height) : parent.width
+            height: root.emphasized ? width : parent.height
+            radius: root.emphasized ? width / 2 : 6
+            color: {
+                if (root.emphasized && root.enabled)
+                    return root.down ? root.theme.accentPressedColor : root.theme.accentColor
+                if (root.hovered && root.enabled)
+                    return root.theme.hoverColor
+                return "transparent"
+            }
         }
     }
 }

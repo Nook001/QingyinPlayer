@@ -254,7 +254,6 @@ ApplicationWindow {
                 Loader {
                     id: pageLoader
                     anchors.fill: parent
-                    anchors.bottomMargin: 104
                     sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
                 }
 

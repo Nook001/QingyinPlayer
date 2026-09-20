@@ -27,7 +27,10 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 34
+        anchors.leftMargin: 34
+        anchors.rightMargin: 34
+        anchors.topMargin: 34
+        anchors.bottomMargin: 0
         spacing: 18
 
         RowLayout {
@@ -105,6 +108,10 @@ Item {
                 cellHeight: 232
                 model: root.collectionModel
                 visible: collectionGrid.count > 0
+                footer: Item {
+                    width: collectionGrid.width
+                    height: 180
+                }
                 Component.onCompleted: contentY = Math.max(0, root.savedGridY)
                 onContentYChanged: root.savedGridY = contentY
 

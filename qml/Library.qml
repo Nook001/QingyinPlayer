@@ -12,11 +12,32 @@ Item {
     required property var session
     property string pendingQuery: ""
     property real savedContentY: 0
+    property bool holdCompletedStatus: false
+    property string completedStatusText: ""
+    property bool statusReady: false
 
     readonly property bool filtering: searchField.text.trim() !== ""
     readonly property bool waitingForSearch: filtering
         && (root.session.searching
             || searchField.text.trim() !== String(root.session.search_query).trim())
+    readonly property bool sessionBusy: root.session.busy
+    readonly property string headerStatusText: {
+        if (root.filtering)
+            return String(root.session.search_status)
+        if (root.sessionBusy)
+            return root.bannerFromSession()
+        if (root.holdCompletedStatus)
+            return root.completedStatusText
+        return ""
+    }
+
+    function bannerFromSession() {
+        const scan = String(root.session.scan_status).trim()
+        const watch = String(root.session.watch_status).trim()
+        if (scan !== "" && watch !== "")
+            return scan + " · " + watch
+        return scan || watch
+    }
 
     function commitPendingQuery() {
         const query = searchField.text.trim()
@@ -28,6 +49,7 @@ Item {
     }
 
     Component.onCompleted: {
+        root.statusReady = true
         if (root.pendingQuery !== "")
             searchField.text = root.pendingQuery
         if (trackTable.count > 0)
@@ -48,6 +70,31 @@ Item {
         onTriggered: root.commitPendingQuery()
     }
 
+    Timer {
+        id: hideStatusTimer
+        interval: 3000
+        repeat: false
+        onTriggered: root.holdCompletedStatus = false
+    }
+
+    onSessionBusyChanged: {
+        if (!root.statusReady)
+            return
+        if (root.sessionBusy) {
+            root.holdCompletedStatus = false
+            hideStatusTimer.stop()
+            return
+        }
+        const text = root.bannerFromSession()
+        if (text === "") {
+            root.holdCompletedStatus = false
+            return
+        }
+        root.completedStatusText = text
+        root.holdCompletedStatus = true
+        hideStatusTimer.restart()
+    }
+
     FolderDialog {
         id: folderDialog
         title: "选择音乐目录"
@@ -56,7 +103,10 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 34
+        anchors.leftMargin: 34
+        anchors.rightMargin: 34
+        anchors.topMargin: 34
+        anchors.bottomMargin: 0
         spacing: 20
 
         RowLayout {
@@ -70,7 +120,20 @@ Item {
                 font.weight: Font.DemiBold
             }
 
-            Item { Layout.fillWidth: true }
+            Text {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                visible: root.headerStatusText !== ""
+                text: root.headerStatusText
+                color: root.theme.mutedTextColor
+                elide: Text.ElideRight
+                font.pixelSize: 12
+            }
+
+            Item {
+                Layout.fillWidth: true
+                visible: root.headerStatusText === ""
+            }
 
             TextField {
                 id: searchField
@@ -120,23 +183,6 @@ Item {
                 enabled: !root.session.busy
                 onClicked: folderDialog.open()
             }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            visible: root.session.scan_status !== "" || root.session.watch_status !== ""
-                || root.filtering
-            text: {
-                if (root.filtering)
-                    return root.session.search_status
-                if (root.session.watch_status !== "")
-                    return root.session.scan_status + (root.session.scan_status !== "" ? " · " : "")
-                        + root.session.watch_status
-                return root.session.scan_status
-            }
-            color: root.theme.mutedTextColor
-            font.pixelSize: 12
-            wrapMode: Text.Wrap
         }
 
         Rectangle {
