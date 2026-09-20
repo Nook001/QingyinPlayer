@@ -70,6 +70,6 @@ qingyin/
 
 Rust 负责逻辑，QML 只负责 UI；成熟组件负责播放和解码；自己重点做好中文曲库、搜索、排序和极简体验。
 
-运行时模块依赖、数据流、播放后端与 SQLite schema 见仓库根目录 [README.md](../README.md)。本文保留产品边界与桥接决策。
+运行时模块依赖、数据流、播放后端、SQLite schema、缓存与关闭行为见仓库根目录 [README.md](../README.md)。本文保留产品边界与桥接决策。历史评估文档保持原结论，不在此改写成当前实现结果。
 
 桥接决策：使用 `qmetaobject` 由 Rust 导出 `QObject`、属性、信号和方法给 QML。`playbin` 的状态切换在 GLib 播放线程上执行，不再和 Qt 主线程并发操作。

@@ -10,20 +10,42 @@ Item {
 
     required property var theme
     required property var session
+    property string pendingQuery: ""
+    property real savedContentY: 0
 
     readonly property bool filtering: searchField.text.trim() !== ""
     readonly property bool waitingForSearch: filtering
         && (root.session.searching
             || searchField.text.trim() !== String(root.session.search_query).trim())
 
+    function commitPendingQuery() {
+        const query = searchField.text.trim()
+        root.pendingQuery = query
+        if (query === "")
+            root.session.clear_search()
+        else
+            root.session.search_tracks(query)
+    }
+
+    Component.onCompleted: {
+        if (root.pendingQuery !== "")
+            searchField.text = root.pendingQuery
+        if (trackTable.count > 0)
+            trackTable.restoreContentY(root.savedContentY)
+    }
+
+    Component.onDestruction: {
+        root.pendingQuery = searchField.text
+        root.savedContentY = trackTable.contentY
+        if (searchField.text.trim() !== String(root.session.search_query).trim())
+            root.commitPendingQuery()
+    }
+
     Timer {
         id: searchDelay
         interval: 180
         repeat: false
-        onTriggered: {
-            if (searchField.text.trim() !== "")
-                root.session.search_tracks(searchField.text)
-        }
+        onTriggered: root.commitPendingQuery()
     }
 
     FolderDialog {
@@ -59,30 +81,11 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            Button {
-                id: addFolderButton
-
-                Layout.preferredWidth: 112
-                Layout.preferredHeight: 38
-                flat: true
-                hoverEnabled: true
+            AccentButton {
+                theme: root.theme
                 text: "添加文件夹"
+                enabled: !root.session.busy
                 onClicked: folderDialog.open()
-
-                contentItem: Text {
-                    text: addFolderButton.text
-                    color: "#FFFFFF"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 13
-                    font.weight: Font.DemiBold
-                }
-
-                background: Rectangle {
-                    radius: 6
-                    color: addFolderButton.down
-                        ? root.theme.accentPressedColor : root.theme.accentColor
-                }
             }
         }
 
@@ -116,10 +119,19 @@ Item {
 
         Text {
             Layout.fillWidth: true
-            visible: root.filtering
-            text: root.session.search_status
+            visible: root.session.scan_status !== "" || root.session.watch_status !== ""
+                || root.filtering
+            text: {
+                if (root.filtering)
+                    return root.session.search_status
+                if (root.session.watch_status !== "")
+                    return root.session.scan_status + (root.session.scan_status !== "" ? " · " : "")
+                        + root.session.watch_status
+                return root.session.scan_status
+            }
             color: root.theme.mutedTextColor
             font.pixelSize: 12
+            wrapMode: Text.Wrap
         }
 
         Rectangle {
@@ -134,11 +146,12 @@ Item {
             Layout.fillHeight: true
             theme: root.theme
             trackModel: root.session.library_model
-            sortColumn: String(root.session.sort_column)
+            sortColumn: String(root.session.sort_column_name)
             sortAscending: root.session.sort_ascending
             visible: count > 0 && !root.waitingForSearch
-            onTrackActivated: function(row) { root.session.play_track(row) }
+            onTrackActivated: function(trackId) { root.session.play_track(trackId) }
             onSortRequested: function(column) { root.session.set_sort(column) }
+            onContentYChanged: root.savedContentY = contentY
         }
 
         Item {

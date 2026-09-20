@@ -4,16 +4,107 @@ mod playback;
 
 use collections::TrackListModel;
 use cstr::cstr;
-use library_session::LibrarySession;
+use library_session::{HostEvent, LibrarySession};
 use playback::PlaybackController;
-use qingyin_core::Settings;
+use qingyin_core::{Settings, SettingsLoad, SortColumn};
 use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use tracing::warn;
+
+struct SettingsWriter {
+    mailbox: Arc<Mutex<Option<Settings>>>,
+    last_error: Arc<Mutex<Option<String>>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl SettingsWriter {
+    fn start() -> Self {
+        let mailbox = Arc::new(Mutex::new(None));
+        let last_error = Arc::new(Mutex::new(None));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_mailbox = Arc::clone(&mailbox);
+        let worker_error = Arc::clone(&last_error);
+        let worker_stop = Arc::clone(&stop);
+        let worker = thread::Builder::new()
+            .name("qingyin-settings".into())
+            .spawn(move || {
+                loop {
+                    if worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Some(settings) = worker_mailbox
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .take()
+                        {
+                            save_settings(&settings, &worker_error);
+                        }
+                        break;
+                    }
+                    let settings = worker_mailbox
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
+                    if let Some(settings) = settings {
+                        save_settings(&settings, &worker_error);
+                    }
+                    thread::sleep(Duration::from_millis(200));
+                }
+            })
+            .ok();
+        Self {
+            mailbox,
+            last_error,
+            stop,
+            worker,
+        }
+    }
+
+    fn enqueue(&self, settings: Settings) {
+        *self
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(settings);
+    }
+
+    fn flush(&self, settings: &Settings) {
+        self.enqueue(settings.clone());
+        if let Some(settings) = self
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            save_settings(&settings, &self.last_error);
+        }
+    }
+
+    fn take_error(&self) -> Option<String> {
+        self.last_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    fn shutdown(&mut self, settings: &Settings) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.flush(settings);
+        if let Some(worker) = self.worker.take() {
+            let (tx, rx) = mpsc::sync_channel(1);
+            thread::spawn(move || {
+                let _ = worker.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+        }
+    }
+}
 
 #[allow(missing_debug_implementations, clippy::struct_excessive_bools)]
 #[derive(QObject, Default)]
@@ -23,8 +114,10 @@ pub struct AppBridge {
     playback: qt_property!(RefCell<PlaybackController>; CONST),
     dark_theme: qt_property!(bool; NOTIFY settings_changed),
     music_folders: qt_property!(QString; NOTIFY settings_changed),
+    settings_error: qt_property!(QString; NOTIFY settings_changed),
     settings_changed: qt_signal!(),
     settings: Settings,
+    settings_writer: Option<SettingsWriter>,
     restored: bool,
     application_name: qt_method!(
         fn application_name(&self) -> QString {
@@ -48,6 +141,12 @@ pub struct AppBridge {
             self.restore_session_internal();
         }
     ),
+    flush_settings: qt_method!(
+        fn flush_settings(&mut self) {
+            self.playback.borrow_mut().flush_volume_internal();
+            self.persist_settings(true);
+        }
+    ),
     shutdown: qt_method!(
         fn shutdown(&mut self) {
             self.shutdown_internal();
@@ -59,6 +158,10 @@ impl AppBridge {
     fn shutdown_internal(&mut self) {
         self.library.borrow_mut().shutdown();
         self.playback.borrow_mut().shutdown();
+        self.capture_settings_from_ui();
+        if let Some(writer) = self.settings_writer.as_mut() {
+            writer.shutdown(&self.settings);
+        }
     }
 
     fn set_dark_theme_internal(&mut self, dark: bool) {
@@ -67,7 +170,7 @@ impl AppBridge {
         }
         self.dark_theme = dark;
         self.settings.dark_theme = dark;
-        self.persist_settings();
+        self.persist_settings(false);
         self.settings_changed();
     }
 
@@ -76,14 +179,25 @@ impl AppBridge {
             return;
         }
         self.restored = true;
-        self.attach_library_host();
-        self.attach_playback_persist();
-        self.settings = Settings::load_or_default();
+        if self.settings_writer.is_none() {
+            self.settings_writer = Some(SettingsWriter::start());
+        }
+        self.attach_host();
+        let loaded = Settings::load_status();
+        let can_prune = loaded.can_prune_library();
+        match &loaded {
+            SettingsLoad::Failed { error, .. } => {
+                self.settings_error = error.to_string().into();
+            }
+            _ => self.settings_error = QString::default(),
+        }
+        self.settings = loaded.into_settings();
         self.apply_settings_to_ui();
         self.library.borrow_mut().restore(
             self.settings.music_directories.clone(),
-            self.settings.sort_column.clone(),
+            self.settings.sort_column,
             self.settings.sort_ascending,
+            can_prune,
         );
     }
 
@@ -96,90 +210,70 @@ impl AppBridge {
         self.settings_changed();
     }
 
-    fn persist_settings(&mut self) {
+    fn capture_settings_from_ui(&mut self) {
         self.settings.volume = self.playback.borrow().volume();
         {
             let library = self.library.borrow();
             self.settings.music_directories = library.music_directories().to_vec();
-            self.settings.sort_column = library.sort_column_string();
+            self.settings.sort_column = library.sort_column();
             self.settings.sort_ascending = library.sort_is_ascending();
         }
         self.music_folders = format_music_folders(&self.settings.music_directories).into();
-        self.settings_changed();
-        if let Err(error) = self.settings.save() {
+    }
+
+    fn persist_settings(&mut self, flush: bool) {
+        let previous_folders = self.music_folders.clone();
+        let previous_error = self.settings_error.clone();
+        self.capture_settings_from_ui();
+        if let Some(writer) = &self.settings_writer {
+            if flush {
+                writer.flush(&self.settings);
+            } else {
+                writer.enqueue(self.settings.clone());
+            }
+            if let Some(error) = writer.take_error() {
+                self.settings_error = error.into();
+            }
+        } else if let Err(error) = self.settings.save() {
             warn!(%error, "failed to save settings");
+            self.settings_error = error.to_string().into();
+        }
+        if previous_folders != self.music_folders || previous_error != self.settings_error {
+            self.settings_changed();
         }
     }
 
-    fn attach_playback_persist(&mut self) {
+    fn attach_host(&mut self) {
         let bridge = QPointer::from(&*self);
-        let persist = qmetaobject::queued_callback(move |volume: f64| {
+        let host = qmetaobject::queued_callback(move |event: HostEvent| {
             let Some(bridge) = bridge.as_pinned() else {
+                return;
+            };
+            let mut bridge = bridge.borrow_mut();
+            match event {
+                HostEvent::Persist => bridge.persist_settings(false),
+                HostEvent::Play { tracks, track_id } => {
+                    bridge.playback.borrow_mut().play_track_id(tracks, track_id);
+                }
+                HostEvent::TrackRemoved => {
+                    bridge.playback.borrow_mut().skip_missing_current_track();
+                }
+            }
+        });
+        self.library.borrow_mut().set_host(host);
+
+        let persist_bridge = QPointer::from(&*self);
+        let persist = qmetaobject::queued_callback(move |volume: f64| {
+            let Some(bridge) = persist_bridge.as_pinned() else {
                 return;
             };
             let mut bridge = bridge.borrow_mut();
             if (bridge.settings.volume - volume).abs() > f64::EPSILON {
                 bridge.settings.volume = volume;
-                bridge.persist_settings();
+                bridge.persist_settings(false);
             }
         });
         self.playback.borrow_mut().set_volume_persist(persist);
-    }
-
-    fn attach_library_host(&mut self) {
-        let persist_bridge = QPointer::from(&*self);
-        let persist = qmetaobject::queued_callback(move |(): ()| {
-            let Some(bridge) = persist_bridge.as_pinned() else {
-                return;
-            };
-            bridge.borrow_mut().persist_settings();
-        });
-        self.library.borrow_mut().set_persist(move || persist(()));
-
-        let path_bridge = QPointer::from(&*self);
-        self.library.borrow_mut().set_current_path(move || {
-            path_bridge
-                .as_pinned()
-                .and_then(|bridge| bridge.borrow().playback.borrow().current_path())
-        });
-
-        let idle_bridge = QPointer::from(&*self);
-        self.library.borrow_mut().set_idle_index(move |position| {
-            let Some(bridge) = idle_bridge.as_pinned() else {
-                return;
-            };
-            bridge
-                .borrow_mut()
-                .playback
-                .borrow_mut()
-                .set_current_index_if_idle(position);
-        });
-
-        let skip_bridge = QPointer::from(&*self);
-        self.library.borrow_mut().set_skip_missing(move || {
-            let Some(bridge) = skip_bridge.as_pinned() else {
-                return;
-            };
-            bridge
-                .borrow_mut()
-                .playback
-                .borrow_mut()
-                .skip_missing_current_track();
-        });
-
-        let play_bridge = QPointer::from(&*self);
-        self.library
-            .borrow_mut()
-            .set_play_from_list(move |tracks, covers, row| {
-                let Some(bridge) = play_bridge.as_pinned() else {
-                    return;
-                };
-                bridge
-                    .borrow_mut()
-                    .playback
-                    .borrow_mut()
-                    .play_from_list(tracks, covers, row);
-            });
     }
 }
 
@@ -190,6 +284,22 @@ pub fn register_qml_types() {
     qml_register_type::<PlaybackController>(cstr!("Qingyin"), 1, 0, cstr!("PlaybackController"));
 }
 
+fn save_settings(settings: &Settings, last_error: &Mutex<Option<String>>) {
+    match settings.save() {
+        Ok(()) => {
+            *last_error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+        Err(error) => {
+            warn!(%error, "failed to save settings");
+            *last_error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error.to_string());
+        }
+    }
+}
+
 fn format_music_folders(directories: &[PathBuf]) -> String {
     directories
         .iter()
@@ -198,19 +308,8 @@ fn format_music_folders(directories: &[PathBuf]) -> String {
         .join("\n")
 }
 
-pub(crate) fn sort_tracks(
-    tracks: &mut Vec<TrackSnapshot>,
-    cover_urls: &mut Vec<String>,
-    column: &str,
-    ascending: bool,
-) {
-    let ascending = column.is_empty() || ascending;
-    cover_urls.resize(tracks.len(), String::new());
-    let mut rows = std::mem::take(tracks)
-        .into_iter()
-        .zip(std::mem::take(cover_urls))
-        .collect::<Vec<_>>();
-    rows.sort_by(|(left, _), (right, _)| {
+pub(crate) fn sort_snapshots(tracks: &mut [TrackSnapshot], column: SortColumn, ascending: bool) {
+    tracks.sort_by(|left, right| {
         let ordering = left.cmp_column(right, column);
         if ascending {
             ordering
@@ -218,9 +317,6 @@ pub(crate) fn sort_tracks(
             ordering.reverse()
         }
     });
-    let (sorted_tracks, sorted_covers) = rows.into_iter().unzip();
-    *tracks = sorted_tracks;
-    *cover_urls = sorted_covers;
 }
 
 pub(crate) const fn previous_track_index(current: usize) -> usize {
@@ -248,6 +344,8 @@ pub(crate) fn duration_millis(duration: Option<Duration>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qingyin_library::TrackSnapshot;
+    use std::time::Duration;
 
     #[test]
     fn track_navigation_stops_at_list_boundaries() {
@@ -261,17 +359,10 @@ mod tests {
     #[test]
     fn sorts_tracks_by_selected_column_and_direction() {
         let mut tracks = vec![test_track("B", "专辑甲", 20), test_track("A", "专辑乙", 10)];
-        let mut covers = vec!["B封面".to_owned(), "A封面".to_owned()];
-
-        sort_tracks(&mut tracks, &mut covers, "title", true);
+        sort_snapshots(&mut tracks, SortColumn::Title, true);
         assert_eq!(tracks[0].metadata.title, "A");
-        assert_eq!(tracks[1].metadata.title, "B");
-        assert_eq!(covers, ["A封面", "B封面"]);
-
-        sort_tracks(&mut tracks, &mut covers, "duration", false);
+        sort_snapshots(&mut tracks, SortColumn::Duration, false);
         assert_eq!(tracks[0].metadata.duration, Some(Duration::from_secs(20)));
-        assert_eq!(tracks[1].metadata.duration, Some(Duration::from_secs(10)));
-        assert_eq!(covers, ["B封面", "A封面"]);
     }
 
     #[test]
@@ -281,8 +372,7 @@ mod tests {
             test_track("Adele", "专辑", 10),
             test_track("阿妹", "专辑", 10),
         ];
-        let mut covers = vec!["z".into(), "a".into(), "m".into()];
-        sort_tracks(&mut tracks, &mut covers, "title", true);
+        sort_snapshots(&mut tracks, SortColumn::Title, true);
         assert_eq!(
             tracks
                 .iter()

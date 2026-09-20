@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=清音
+Name[en]=Qingyin
+Comment=Chinese-first local music player
+Exec=qingyin
+Icon=qingyin
+Terminal=false
+Categories=AudioVideo;Player;Audio;
+StartupNotify=true

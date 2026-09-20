@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "qingyin"
+path = "src/main.rs"
+
 [dependencies]
 cstr.workspace = true
-image.workspace = true
 qmetaobject.workspace = true
 qingyin-core = { path = "../core" }
 qingyin-library = { path = "../library" }

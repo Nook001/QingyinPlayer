@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
 
+use qingyin_core::SortColumn;
 use qingyin_library::{CollectionEntry, TrackSnapshot};
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
@@ -12,11 +11,13 @@ pub(crate) const TRACK_ALBUM_ROLE: i32 = TRACK_TITLE_ROLE + 2;
 pub(crate) const TRACK_DURATION_ROLE: i32 = TRACK_TITLE_ROLE + 3;
 pub(crate) const TRACK_PATH_ROLE: i32 = TRACK_TITLE_ROLE + 4;
 pub(crate) const TRACK_COVER_ROLE: i32 = TRACK_TITLE_ROLE + 5;
+pub(crate) const TRACK_ID_ROLE: i32 = TRACK_TITLE_ROLE + 6;
 
 const COLLECTION_NAME_ROLE: i32 = 0x0100;
 const COLLECTION_SUBTITLE_ROLE: i32 = COLLECTION_NAME_ROLE + 1;
 const COLLECTION_COVER_ROLE: i32 = COLLECTION_NAME_ROLE + 2;
 const COLLECTION_TRACK_COUNT_ROLE: i32 = COLLECTION_NAME_ROLE + 3;
+const COLLECTION_ID_ROLE: i32 = COLLECTION_NAME_ROLE + 4;
 
 fn track_role_names() -> HashMap<i32, QByteArray> {
     HashMap::from([
@@ -26,6 +27,7 @@ fn track_role_names() -> HashMap<i32, QByteArray> {
         (TRACK_DURATION_ROLE, "duration".into()),
         (TRACK_PATH_ROLE, "path".into()),
         (TRACK_COVER_ROLE, "cover".into()),
+        (TRACK_ID_ROLE, "trackId".into()),
     ])
 }
 
@@ -37,6 +39,7 @@ fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
         TRACK_DURATION_ROLE => QString::from(crate::format_duration(track)).into(),
         TRACK_PATH_ROLE => QString::from(track.path.to_string_lossy().into_owned()).into(),
         TRACK_COVER_ROLE => QString::from(cover).into(),
+        TRACK_ID_ROLE => track.id.into(),
         _ => QVariant::default(),
     }
 }
@@ -56,16 +59,8 @@ impl CollectionModel {
     }
 
     #[must_use]
-    pub fn entry(&self, row: usize) -> Option<CollectionEntry> {
-        self.entries.get(row).cloned()
-    }
-
-    #[must_use]
-    pub fn entry_by_name(&self, name: &str) -> Option<CollectionEntry> {
-        self.entries
-            .iter()
-            .find(|entry| entry.name == name)
-            .cloned()
+    pub fn entry_by_id(&self, id: &str) -> Option<CollectionEntry> {
+        self.entries.iter().find(|entry| entry.id == id).cloned()
     }
 }
 
@@ -75,45 +70,82 @@ impl CollectionModel {
 pub struct TrackListModel {
     base: qt_base_class!(trait QAbstractListModel),
     tracks: Vec<TrackSnapshot>,
-    cover_urls: Vec<String>,
 }
 
 impl TrackListModel {
-    pub fn replace(&mut self, tracks: Vec<TrackSnapshot>, cover_urls: Vec<String>) {
+    pub fn replace(&mut self, tracks: Vec<TrackSnapshot>) {
         self.begin_reset_model();
         self.tracks = tracks;
-        self.cover_urls = cover_urls;
-        self.cover_urls.resize(self.tracks.len(), String::new());
         self.end_reset_model();
     }
 
-    pub fn sort_in_place(&mut self, column: &str, ascending: bool) {
+    pub fn sort_in_place(&mut self, column: SortColumn, ascending: bool) {
         if self.tracks.is_empty() {
             return;
         }
-        crate::sort_tracks(&mut self.tracks, &mut self.cover_urls, column, ascending);
-        let last = i32::try_from(self.tracks.len().saturating_sub(1)).unwrap_or(i32::MAX);
-        let top_left = self.row_index(0);
-        let bottom_right = self.row_index(last);
-        self.data_changed(top_left, bottom_right);
+        crate::sort_snapshots(&mut self.tracks, column, ascending);
+        // qmetaobject's list model does not expose layoutChanged; role data for every
+        // row is refreshed so QML bindings keep the same TrackId on each snapshot.
+        if let Ok(last) = i32::try_from(self.tracks.len().saturating_sub(1)) {
+            let top = self.row_index(0);
+            let bottom = self.row_index(last);
+            self.data_changed(top, bottom);
+        }
     }
 
-    #[must_use]
-    pub fn snapshot(&self) -> (Vec<TrackMetadata>, Vec<String>) {
-        (
-            self.tracks
-                .iter()
-                .map(|track| track.metadata.clone())
-                .collect(),
-            self.cover_urls.clone(),
-        )
-    }
-
-    #[must_use]
-    pub fn position_of_path(&self, path: &Path) -> Option<usize> {
-        self.tracks
+    pub fn upsert(&mut self, snapshot: TrackSnapshot) {
+        if let Some(index) = self
+            .tracks
             .iter()
-            .position(|track| track.metadata.path == path)
+            .position(|track| track.id() == snapshot.id())
+        {
+            self.tracks[index] = snapshot;
+            if let Ok(row) = i32::try_from(index) {
+                let index = self.row_index(row);
+                self.data_changed(index, index);
+            }
+            return;
+        }
+        let Ok(row) = i32::try_from(self.tracks.len()) else {
+            return;
+        };
+        self.begin_insert_rows(row, row);
+        self.tracks.push(snapshot);
+        self.end_insert_rows();
+    }
+
+    pub fn remove_ids(&mut self, ids: &[i64]) {
+        for id in ids {
+            if let Some(index) = self.tracks.iter().position(|track| track.id() == *id) {
+                let Ok(row) = i32::try_from(index) else {
+                    continue;
+                };
+                self.begin_remove_rows(row, row);
+                self.tracks.remove(index);
+                self.end_remove_rows();
+            }
+        }
+    }
+
+    pub fn set_cover(&mut self, track_id: i64, url: String) {
+        if let Some(index) = self.tracks.iter().position(|track| track.id() == track_id) {
+            self.tracks[index].cover_url = url;
+            if let Ok(row) = i32::try_from(index) {
+                let index = self.row_index(row);
+                self.data_changed(index, index);
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<TrackSnapshot> {
+        self.tracks.clone()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn position_of_id(&self, id: i64) -> Option<usize> {
+        self.tracks.iter().position(|track| track.id() == id)
     }
 }
 
@@ -121,28 +153,29 @@ impl TrackListModel {
 #[derive(QObject, Default)]
 pub struct DetailTrackModel {
     base: qt_base_class!(trait QAbstractListModel),
-    tracks: Vec<Arc<TrackMetadata>>,
-    cover_urls: Vec<String>,
+    tracks: Vec<TrackSnapshot>,
 }
 
 impl DetailTrackModel {
-    pub fn reset(&mut self, tracks: Vec<Arc<TrackMetadata>>, cover_urls: Vec<String>) {
+    pub fn reset(&mut self, tracks: Vec<TrackSnapshot>) {
         self.begin_reset_model();
         self.tracks = tracks;
-        self.cover_urls = cover_urls;
-        self.cover_urls.resize(self.tracks.len(), String::new());
         self.end_reset_model();
     }
 
+    pub fn set_cover(&mut self, track_id: i64, url: String) {
+        if let Some(index) = self.tracks.iter().position(|track| track.id() == track_id) {
+            self.tracks[index].cover_url = url;
+            if let Ok(row) = i32::try_from(index) {
+                let index = self.row_index(row);
+                self.data_changed(index, index);
+            }
+        }
+    }
+
     #[must_use]
-    pub fn snapshot(&self) -> (Vec<TrackMetadata>, Vec<String>) {
-        (
-            self.tracks
-                .iter()
-                .map(|track| track.as_ref().clone())
-                .collect(),
-            self.cover_urls.clone(),
-        )
+    pub fn snapshot(&self) -> Vec<TrackSnapshot> {
+        self.tracks.clone()
     }
 }
 
@@ -158,8 +191,7 @@ impl QAbstractListModel for TrackListModel {
         let Some(track) = self.tracks.get(row) else {
             return QVariant::default();
         };
-        let cover = self.cover_urls.get(row).map_or("", String::as_str);
-        track_role_data(&track.metadata, cover, role)
+        track_role_data(&track.metadata, &track.cover_url, role)
     }
 
     fn role_names(&self) -> HashMap<i32, QByteArray> {
@@ -179,8 +211,7 @@ impl QAbstractListModel for DetailTrackModel {
         let Some(track) = self.tracks.get(row) else {
             return QVariant::default();
         };
-        let cover = self.cover_urls.get(row).map_or("", String::as_str);
-        track_role_data(track, cover, role)
+        track_role_data(&track.metadata, &track.cover_url, role)
     }
 
     fn role_names(&self) -> HashMap<i32, QByteArray> {
@@ -208,6 +239,7 @@ impl QAbstractListModel for CollectionModel {
             COLLECTION_TRACK_COUNT_ROLE => {
                 i64::try_from(entry.track_count).unwrap_or(i64::MAX).into()
             }
+            COLLECTION_ID_ROLE => QString::from(entry.id.clone()).into(),
             _ => QVariant::default(),
         }
     }
@@ -218,6 +250,7 @@ impl QAbstractListModel for CollectionModel {
             (COLLECTION_SUBTITLE_ROLE, "subtitle".into()),
             (COLLECTION_COVER_ROLE, "cover".into()),
             (COLLECTION_TRACK_COUNT_ROLE, "track_count".into()),
+            (COLLECTION_ID_ROLE, "collectionId".into()),
         ])
     }
 }
@@ -253,5 +286,22 @@ mod tests {
                 .to_string(),
             "2:05"
         );
+    }
+
+    #[test]
+    fn sort_keeps_stable_track_ids() {
+        let mut first = TrackMetadata::from_display("/music/b.flac", "B", None, Vec::new(), None);
+        first.id = 2;
+        let mut second = TrackMetadata::from_display("/music/a.flac", "A", None, Vec::new(), None);
+        second.id = 7;
+        let mut model = TrackListModel::default();
+        model.replace(vec![
+            TrackSnapshot::from_metadata(first),
+            TrackSnapshot::from_metadata(second),
+        ]);
+        model.sort_in_place(SortColumn::Title, true);
+        assert_eq!(model.position_of_id(7), Some(0));
+        assert_eq!(model.position_of_id(2), Some(1));
+        assert_eq!(model.snapshot()[0].metadata.title, "A");
     }
 }

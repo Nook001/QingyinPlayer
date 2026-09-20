@@ -3,10 +3,9 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import Qingyin 1.0
 
-// System chrome owns move/resize. Lists are ItemDelegate rows in a
-// ScrollView. Play and page switches are deferred with Qt.callLater.
 ApplicationWindow {
     id: window
 
@@ -16,58 +15,60 @@ ApplicationWindow {
     minimumHeight: 600
     visible: true
     title: backend.application_name()
-    color: window.backgroundColor
+    color: appTheme.backgroundColor
+
+    function qingyinRootLoaded() {
+        return true
+    }
 
     property int currentView: 0
     property bool sidebarCollapsed: false
     property bool darkTheme: backend.dark_theme
+    property string libraryQuery: ""
+    property real libraryContentY: 0
+    property real artistGridY: 0
+    property real albumGridY: 0
 
-    readonly property color backgroundColor: darkTheme ? "#151817" : "#F5F6F3"
-    readonly property color surfaceColor: darkTheme ? "#1D2220" : "#FAFBF8"
-    readonly property color sidebarColor: darkTheme ? "#101312" : "#202A27"
-    readonly property color sidebarSelectedColor: darkTheme ? "#29312E" : "#2F403A"
-    readonly property color textColor: darkTheme ? "#F1F4F2" : "#1D2523"
-    readonly property color mutedTextColor: darkTheme ? "#A4AFAA" : "#68736F"
-    readonly property color sidebarTextColor: "#C5CEC9"
-    readonly property color accentColor: darkTheme ? "#51A98D" : "#24745F"
-    readonly property color accentPressedColor: darkTheme ? "#3D876F" : "#1B5E4D"
-    readonly property color dividerColor: darkTheme ? "#343B38" : "#DEE2DC"
-    readonly property color fieldColor: darkTheme ? "#222825" : "#FFFFFF"
-    readonly property color subtleColor: darkTheme ? "#29312E" : "#E4ECE7"
-    readonly property color artworkColor: darkTheme ? "#312D29" : "#E8E3DA"
-    readonly property color hoverColor: darkTheme ? "#2A302E" : "#EDF0EC"
+    Theme {
+        id: appTheme
+        darkTheme: window.darkTheme
+    }
 
-    palette.window: backgroundColor
-    palette.windowText: textColor
-    palette.base: fieldColor
-    palette.text: textColor
-    palette.button: surfaceColor
-    palette.buttonText: textColor
-    palette.highlight: accentColor
-    palette.mid: sidebarSelectedColor
-    palette.light: hoverColor
+    palette.window: appTheme.backgroundColor
+    palette.windowText: appTheme.textColor
+    palette.base: appTheme.fieldColor
+    palette.text: appTheme.textColor
+    palette.button: appTheme.surfaceColor
+    palette.buttonText: appTheme.textColor
+    palette.highlight: appTheme.accentColor
+    palette.mid: appTheme.sidebarSelectedColor
+    palette.light: appTheme.hoverColor
 
     AppBridge {
         id: backend
     }
 
-    Component.onCompleted: {
-        backend.restore_session()
-    }
+    Component.onCompleted: backend.restore_session()
 
     onClosing: function(close) {
+        backend.flush_settings()
         backend.shutdown()
         close.accepted = true
         Qt.quit()
+    }
+
+    onVisibilityChanged: function(visibility) {
+        backend.playback.set_ui_visible(
+            visibility !== Window.Minimized && visibility !== Window.Hidden)
     }
 
     font.family: "Noto Sans CJK SC"
 
     function navButtonBackground(button, selected) {
         if (button.down)
-            return window.sidebarSelectedColor
+            return appTheme.sidebarSelectedColor
         if (selected || button.hovered)
-            return window.sidebarSelectedColor
+            return appTheme.sidebarSelectedColor
         return "transparent"
     }
 
@@ -78,7 +79,7 @@ ApplicationWindow {
         Rectangle {
             Layout.preferredWidth: window.sidebarCollapsed ? 64 : 210
             Layout.fillHeight: true
-            color: window.sidebarColor
+            color: appTheme.sidebarColor
 
             ColumnLayout {
                 anchors.fill: parent
@@ -101,29 +102,14 @@ ApplicationWindow {
                         font.weight: Font.DemiBold
                     }
 
-                    Button {
-                        id: collapseButton
-
+                    FlatButton {
                         Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: 40
-                        Layout.preferredHeight: 40
-                        flat: true
-                        hoverEnabled: true
+                        preferredWidth: 40
+                        preferredHeight: 40
+                        theme: appTheme
+                        text: window.sidebarCollapsed ? ">" : "<"
                         Accessible.name: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
                         onClicked: window.sidebarCollapsed = !window.sidebarCollapsed
-
-                        background: Rectangle {
-                            radius: 5
-                            color: window.navButtonBackground(collapseButton, false)
-                        }
-
-                        contentItem: Text {
-                            text: window.sidebarCollapsed ? ">" : "<"
-                            color: window.sidebarTextColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font.pixelSize: 19
-                        }
                     }
                 }
 
@@ -164,7 +150,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 34
                                 text: navigationButton.modelData.icon
                                 color: window.currentView === navigationButton.index
-                                    ? "#FFFFFF" : window.sidebarTextColor
+                                    ? "#FFFFFF" : appTheme.sidebarTextColor
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                                 font.pixelSize: 17
@@ -189,7 +175,7 @@ ApplicationWindow {
                             height: 20
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            color: window.accentColor
+                            color: appTheme.accentColor
                             visible: window.currentView === navigationButton.index
                             radius: 2
                         }
@@ -219,7 +205,7 @@ ApplicationWindow {
                         Text {
                             Layout.preferredWidth: 34
                             text: "⚙"
-                            color: window.currentView === 3 ? "#FFFFFF" : window.sidebarTextColor
+                            color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                             font.pixelSize: 17
@@ -229,7 +215,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: !window.sidebarCollapsed
                             text: "设置"
-                            color: window.currentView === 3 ? "#FFFFFF" : window.sidebarTextColor
+                            color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
                             font.pixelSize: 14
                             font.weight: window.currentView === 3 ? Font.DemiBold : Font.Normal
                             verticalAlignment: Text.AlignVCenter
@@ -241,7 +227,7 @@ ApplicationWindow {
                         height: 20
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        color: window.accentColor
+                        color: appTheme.accentColor
                         visible: window.currentView === 3
                         radius: 2
                     }
@@ -264,7 +250,7 @@ ApplicationWindow {
             PlayerBar {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 104
-                theme: window
+                theme: appTheme
                 playerBackend: backend.playback
             }
         }
@@ -273,33 +259,42 @@ ApplicationWindow {
     Component {
         id: libraryPage
         Library {
-            theme: window
+            theme: appTheme
             session: backend.library
+            pendingQuery: window.libraryQuery
+            savedContentY: window.libraryContentY
+            onPendingQueryChanged: window.libraryQuery = pendingQuery
+            onSavedContentYChanged: window.libraryContentY = savedContentY
         }
     }
 
     Component {
         id: artistPage
         Artist {
-            theme: window
+            theme: appTheme
             libraryModel: backend.library
+            savedGridY: window.artistGridY
+            onSavedGridYChanged: window.artistGridY = savedGridY
         }
     }
 
     Component {
         id: albumPage
         Album {
-            theme: window
+            theme: appTheme
             libraryModel: backend.library
+            savedGridY: window.albumGridY
+            onSavedGridYChanged: window.albumGridY = savedGridY
         }
     }
 
     Component {
         id: settingsPage
         Settings {
-            theme: window
+            theme: appTheme
             darkMode: backend.dark_theme
             musicFolders: backend.music_folders
+            settingsError: backend.settings_error
             onThemeRequested: function(dark) {
                 backend.set_dark_theme(dark)
             }

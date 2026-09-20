@@ -1,9 +1,13 @@
-use std::fs;
-use std::io;
+mod paths;
+
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use paths::{PathError, XdgDirs};
 
 const SETTINGS_VERSION: u32 = 1;
 const DEFAULT_VOLUME: f64 = 1.0;
@@ -20,8 +24,106 @@ pub enum SettingsError {
     Parse(#[from] toml::de::Error),
     #[error("failed to serialize settings: {0}")]
     Serialize(#[from] toml::ser::Error),
-    #[error("unable to determine config directory")]
-    MissingConfigHome,
+    #[error(transparent)]
+    Paths(#[from] PathError),
+    #[error("settings version {found} is newer than supported version {supported}")]
+    UnsupportedVersion { found: u32, supported: u32 },
+}
+
+/// Distinguishes a successful read from a missing file and an unreadable file.
+#[derive(Debug)]
+pub enum SettingsLoad {
+    Loaded(Settings),
+    Missing(Settings),
+    Failed {
+        error: SettingsError,
+        fallback: Settings,
+    },
+}
+
+impl SettingsLoad {
+    #[must_use]
+    pub fn settings(&self) -> &Settings {
+        match self {
+            Self::Loaded(settings) | Self::Missing(settings) => settings,
+            Self::Failed { fallback, .. } => fallback,
+        }
+    }
+
+    #[must_use]
+    pub const fn can_prune_library(&self) -> bool {
+        matches!(self, Self::Loaded(_))
+    }
+
+    #[must_use]
+    pub fn into_settings(self) -> Settings {
+        match self {
+            Self::Loaded(settings) | Self::Missing(settings) => settings,
+            Self::Failed { fallback, .. } => fallback,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortColumn {
+    #[default]
+    Title,
+    Album,
+    Duration,
+}
+
+impl SortColumn {
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "" | "title" => Some(Self::Title),
+            "album" => Some(Self::Album),
+            "duration" => Some(Self::Duration),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Album => "album",
+            Self::Duration => "duration",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortOrder {
+    #[must_use]
+    pub const fn from_ascending(ascending: bool) -> Self {
+        if ascending {
+            Self::Ascending
+        } else {
+            Self::Descending
+        }
+    }
+
+    #[must_use]
+    pub const fn is_ascending(self) -> bool {
+        matches!(self, Self::Ascending)
+    }
+
+    #[must_use]
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,9 +136,9 @@ pub struct Settings {
     pub dark_theme: bool,
     #[serde(default = "default_volume")]
     pub volume: f64,
-    #[serde(default)]
-    pub sort_column: String,
-    #[serde(default = "default_sort_ascending")]
+    #[serde(default, deserialize_with = "deserialize_sort_column")]
+    pub sort_column: SortColumn,
+    #[serde(default = "default_sort_ascending", alias = "sort_ascending")]
     pub sort_ascending: bool,
 }
 
@@ -47,22 +149,47 @@ impl Default for Settings {
             music_directories: Vec::new(),
             dark_theme: false,
             volume: DEFAULT_VOLUME,
-            sort_column: String::new(),
+            sort_column: SortColumn::Title,
             sort_ascending: true,
         }
     }
 }
 
 impl Settings {
-    /// Loads settings from the user config path, falling back to defaults.
+    /// Loads settings, preserving the difference between missing and unreadable files.
     #[must_use]
-    pub fn load_or_default() -> Self {
-        match Self::load() {
-            Ok(settings) => settings,
-            Err(error) => {
-                tracing::warn!(%error, "using default settings");
-                Self::default()
+    pub fn load_status() -> SettingsLoad {
+        match settings_path() {
+            Ok(path) => Self::load_status_from(path),
+            Err(error) => SettingsLoad::Failed {
+                error,
+                fallback: Self::default(),
+            },
+        }
+    }
+
+    /// Loads settings from `path` without collapsing errors into empty roots.
+    #[must_use]
+    pub fn load_status_from(path: impl AsRef<Path>) -> SettingsLoad {
+        let path = path.as_ref();
+        match fs::metadata(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                SettingsLoad::Missing(Self::default())
             }
+            Err(error) => SettingsLoad::Failed {
+                error: SettingsError::Io {
+                    path: path.to_path_buf(),
+                    source: error,
+                },
+                fallback: Self::default(),
+            },
+            Ok(_) => match Self::load_from(path) {
+                Ok(settings) => SettingsLoad::Loaded(settings),
+                Err(error) => SettingsLoad::Failed {
+                    error,
+                    fallback: Self::default(),
+                },
+            },
         }
     }
 
@@ -70,7 +197,7 @@ impl Settings {
     ///
     /// # Errors
     ///
-    /// Returns [`SettingsError`] when the file exists but cannot be read or parsed.
+    /// Returns [`SettingsError`] when the file exists but cannot be read, parsed, or is too new.
     pub fn load() -> Result<Self, SettingsError> {
         Self::load_from(settings_path()?)
     }
@@ -79,13 +206,13 @@ impl Settings {
     ///
     /// # Errors
     ///
-    /// Returns [`SettingsError`] when the file exists but cannot be read or parsed.
+    /// Returns [`SettingsError`] when the file exists but cannot be read, parsed, or is too new.
     pub fn load_from(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
         let path = path.as_ref();
         match fs::read_to_string(path) {
             Ok(text) => {
                 let mut settings = toml::from_str::<Self>(&text)?;
-                settings.normalize();
+                settings.migrate()?;
                 Ok(settings)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
@@ -105,13 +232,20 @@ impl Settings {
         self.save_to(settings_path()?)
     }
 
-    /// Writes settings to `path`, creating parent directories as needed.
+    /// Writes settings to `path` via a temporary file in the same directory, then replaces it.
     ///
     /// # Errors
     ///
-    /// Returns [`SettingsError`] when the file cannot be serialized or written.
+    /// Returns [`SettingsError`] when the file cannot be serialized or written. A failed write
+    /// leaves the previous file in place.
     pub fn save_to(&self, path: impl AsRef<Path>) -> Result<(), SettingsError> {
         let path = path.as_ref();
+        if self.version > SETTINGS_VERSION {
+            return Err(SettingsError::UnsupportedVersion {
+                found: self.version,
+                supported: SETTINGS_VERSION,
+            });
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| SettingsError::Io {
                 path: parent.to_path_buf(),
@@ -119,11 +253,9 @@ impl Settings {
             })?;
         }
         let mut settings = self.clone();
-        settings.normalize();
-        fs::write(path, toml::to_string_pretty(&settings)?).map_err(|source| SettingsError::Io {
-            path: path.to_path_buf(),
-            source,
-        })
+        settings.prepare_for_save();
+        let encoded = toml::to_string_pretty(&settings)?;
+        atomic_write(path, encoded.as_bytes())
     }
 
     pub fn add_music_directory(&mut self, path: PathBuf) -> bool {
@@ -138,23 +270,51 @@ impl Settings {
         true
     }
 
-    fn normalize(&mut self) {
+    #[must_use]
+    pub const fn sort_order(&self) -> SortOrder {
+        SortOrder::from_ascending(self.sort_ascending)
+    }
+
+    pub fn set_sort_order(&mut self, order: SortOrder) {
+        self.sort_ascending = order.is_ascending();
+    }
+
+    fn migrate(&mut self) -> Result<(), SettingsError> {
+        if self.version > SETTINGS_VERSION {
+            return Err(SettingsError::UnsupportedVersion {
+                found: self.version,
+                supported: SETTINGS_VERSION,
+            });
+        }
+        if self.version == 0 {
+            self.version = SETTINGS_VERSION;
+        }
+        self.sanitize_values();
+        Ok(())
+    }
+
+    fn prepare_for_save(&mut self) {
         self.version = SETTINGS_VERSION;
+        self.sanitize_values();
+    }
+
+    fn sanitize_values(&mut self) {
         self.volume = if self.volume.is_finite() {
             self.volume.clamp(0.0, 1.0)
         } else {
             DEFAULT_VOLUME
         };
-        if !matches!(
-            self.sort_column.as_str(),
-            "" | "title" | "album" | "duration"
-        ) {
-            self.sort_column.clear();
-            self.sort_ascending = true;
-        }
         self.music_directories
             .retain(|path| !path.as_os_str().is_empty());
     }
+}
+
+fn deserialize_sort_column<'de, D>(deserializer: D) -> Result<SortColumn, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(SortColumn::from_name(&value).unwrap_or_default())
 }
 
 fn default_version() -> u32 {
@@ -170,11 +330,47 @@ const fn default_sort_ascending() -> bool {
 }
 
 fn settings_path() -> Result<PathBuf, SettingsError> {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .ok_or(SettingsError::MissingConfigHome)?;
-    Ok(config_home.join("qingyin/settings.toml"))
+    Ok(XdgDirs::resolve()?.settings_file())
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), SettingsError> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map_or_else(|| "settings.toml".into(), |name| name.to_os_string());
+    let temp_path = directory.join(format!(
+        ".{}.tmp-{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    let write_result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)
+            .map_err(|source| SettingsError::Io {
+                path: temp_path.clone(),
+                source,
+            })?;
+        file.write_all(bytes).map_err(|source| SettingsError::Io {
+            path: temp_path.clone(),
+            source,
+        })?;
+        file.sync_all().map_err(|source| SettingsError::Io {
+            path: temp_path.clone(),
+            source,
+        })?;
+        drop(file);
+        fs::rename(&temp_path, path).map_err(|source| SettingsError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    write_result
 }
 
 #[cfg(test)]
@@ -186,8 +382,11 @@ mod tests {
         let path = unique_temp_path("missing.toml");
         let settings = Settings::load_from(&path).unwrap();
         assert_eq!(settings, Settings::default());
-        assert!((settings.volume - 1.0).abs() < f64::EPSILON);
-        assert!(!settings.dark_theme);
+        assert!(matches!(
+            Settings::load_status_from(&path),
+            SettingsLoad::Missing(_)
+        ));
+        assert!(!Settings::load_status_from(&path).can_prune_library());
     }
 
     #[test]
@@ -196,7 +395,7 @@ mod tests {
         let mut settings = Settings {
             dark_theme: true,
             volume: 1.8,
-            sort_column: "album".into(),
+            sort_column: SortColumn::Album,
             sort_ascending: false,
             ..Settings::default()
         };
@@ -207,9 +406,10 @@ mod tests {
         let loaded = Settings::load_from(&path).unwrap();
         assert!(loaded.dark_theme);
         assert!((loaded.volume - 1.0).abs() < f64::EPSILON);
-        assert_eq!(loaded.sort_column, "album");
+        assert_eq!(loaded.sort_column, SortColumn::Album);
         assert!(!loaded.sort_ascending);
         assert_eq!(loaded.music_directories, vec![PathBuf::from("/music")]);
+        assert!(Settings::load_status_from(&path).can_prune_library());
     }
 
     #[test]
@@ -217,6 +417,11 @@ mod tests {
         let path = unique_temp_path("invalid.toml");
         fs::write(&path, "not = toml {").unwrap();
         assert!(Settings::load_from(&path).is_err());
+        assert!(matches!(
+            Settings::load_status_from(&path),
+            SettingsLoad::Failed { .. }
+        ));
+        assert!(!Settings::load_status_from(&path).can_prune_library());
 
         let settings_path = unique_temp_path("sort.toml");
         fs::write(
@@ -225,16 +430,63 @@ mod tests {
         )
         .unwrap();
         let loaded = Settings::load_from(&settings_path).unwrap();
-        assert!(loaded.sort_column.is_empty());
+        assert_eq!(loaded.sort_column, SortColumn::Title);
         assert!(loaded.sort_ascending);
         assert!((loaded.volume - 1.0).abs() < f64::EPSILON);
     }
 
+    #[test]
+    fn refuses_future_settings_versions() {
+        let path = unique_temp_path("future.toml");
+        fs::write(&path, "version = 99\nvolume = 0.5\n").unwrap();
+        match Settings::load_from(&path) {
+            Err(SettingsError::UnsupportedVersion {
+                found: 99,
+                supported: 1,
+            }) => {}
+            other => panic!("unexpected result {other:?}"),
+        }
+        let settings = Settings {
+            version: 99,
+            ..Settings::default()
+        };
+        assert!(matches!(
+            settings.save_to(&path),
+            Err(SettingsError::UnsupportedVersion { found: 99, .. })
+        ));
+    }
+
+    #[test]
+    fn keeps_previous_file_when_temp_replace_target_is_a_directory() {
+        let directory = unique_temp_dir("atomic");
+        let path = directory.join("settings.toml");
+        fs::write(&path, "version = 1\nvolume = 0.25\n").unwrap();
+        let conflict = unique_temp_dir("atomic-conflict");
+        let settings = Settings {
+            volume: 0.4,
+            ..Settings::default()
+        };
+        assert!(settings.save_to(&conflict).is_err());
+        let original = fs::read_to_string(&path).unwrap();
+        assert!(original.contains("0.25"));
+    }
+
     fn unique_temp_path(name: &str) -> PathBuf {
-        let directory =
-            std::env::temp_dir().join(format!("qingyin-settings-{}-{}", std::process::id(), name));
+        unique_temp_dir(name).join(name)
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "qingyin-settings-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+            name
+        ));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
-        directory.join(name)
+        directory
     }
 }

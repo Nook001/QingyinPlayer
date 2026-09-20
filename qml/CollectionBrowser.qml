@@ -17,9 +17,11 @@ Item {
     required property string selectedSubtitle
     required property string selectedCover
 
-    signal collectionOpened(int row)
+    property real savedGridY: 0
+
+    signal collectionOpened(string collectionId)
     signal collectionClosed()
-    signal trackActivated(int row)
+    signal trackActivated(int trackId)
 
     readonly property bool showingDetail: root.selectedName !== ""
 
@@ -32,55 +34,21 @@ Item {
             Layout.fillWidth: true
             spacing: 12
 
-            Button {
-                id: backButton
-
+            FlatButton {
                 visible: root.showingDetail
-                Layout.preferredWidth: 40
-                Layout.preferredHeight: 40
-                flat: true
-                hoverEnabled: true
+                preferredWidth: 40
+                preferredHeight: 40
+                theme: root.theme
+                text: "‹"
                 Accessible.name: "返回"
                 onClicked: Qt.callLater(function() { root.collectionClosed() })
-
-                contentItem: Text {
-                    text: "‹"
-                    color: root.theme.textColor
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 28
-                }
-
-                background: Rectangle {
-                    radius: 6
-                    color: backButton.hovered ? root.theme.hoverColor : "transparent"
-                }
             }
 
-            Rectangle {
+            CoverImage {
                 visible: root.showingDetail
-                Layout.preferredWidth: 52
-                Layout.preferredHeight: 52
-                color: root.theme.artworkColor
-                radius: 6
-                clip: true
-
-                Image {
-                    id: headerCover
-                    anchors.fill: parent
-                    source: root.selectedCover
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    visible: status === Image.Ready
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "♫"
-                    color: root.theme.accentColor
-                    font.pixelSize: 18
-                    visible: headerCover.status !== Image.Ready
-                }
+                displaySize: 52
+                theme: root.theme
+                source: root.selectedCover
             }
 
             ColumnLayout {
@@ -113,116 +81,92 @@ Item {
             color: root.theme.dividerColor
         }
 
-        ScrollView {
-            id: collectionScroll
-
+        Loader {
+            id: bodyLoader
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !root.showingDetail && collectionRepeater.count > 0
-            clip: true
-            contentWidth: availableWidth
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            sourceComponent: root.showingDetail ? detailComponent : gridComponent
+        }
+    }
 
-            Grid {
-                width: collectionScroll.availableWidth
-                columns: Math.max(1, Math.floor(width / 176))
+    Component {
+        id: gridComponent
 
-                Repeater {
-                    id: collectionRepeater
-                    model: root.collectionModel
+        Item {
+            id: gridRoot
 
-                    delegate: ItemDelegate {
-                        id: collectionCard
+            GridView {
+                id: collectionGrid
+                anchors.fill: parent
+                clip: true
+                reuseItems: true
+                cacheBuffer: 464
+                cellWidth: 176
+                cellHeight: 232
+                model: root.collectionModel
+                visible: collectionGrid.count > 0
+                Component.onCompleted: contentY = Math.max(0, root.savedGridY)
+                onContentYChanged: root.savedGridY = contentY
 
-                        required property int index
-                        required property string name
-                        required property string subtitle
-                        required property string cover
+                delegate: ItemDelegate {
+                    id: collectionCard
 
-                        width: 176
-                        height: 232
-                        padding: 8
-                        hoverEnabled: true
-                        text: collectionCard.name
-                        Accessible.name: collectionCard.name
+                    required property string name
+                    required property string subtitle
+                    required property string cover
+                    required property string collectionId
 
-                        background: Rectangle {
-                            color: collectionCard.hovered ? root.theme.hoverColor : "transparent"
-                            radius: 10
+                    width: 176
+                    height: 232
+                    padding: 8
+                    hoverEnabled: true
+                    text: collectionCard.name
+                    Accessible.name: collectionCard.name
+
+                    GridView.onPooled: collectionCard.highlighted = false
+                    GridView.onReused: collectionCard.highlighted = false
+
+                    background: Rectangle {
+                        color: collectionCard.hovered ? root.theme.hoverColor : "transparent"
+                        radius: 10
+                    }
+
+                    contentItem: Column {
+                        spacing: 8
+
+                        CoverImage {
+                            displaySize: 160
+                            theme: root.theme
+                            source: collectionCard.cover
                         }
 
-                        contentItem: Column {
-                            spacing: 8
-
-                            Rectangle {
-                                width: parent.width
-                                height: parent.width
-                                color: root.theme.artworkColor
-                                radius: 8
-                                clip: true
-
-                                Image {
-                                    id: coverImage
-                                    anchors.fill: parent
-                                    source: collectionCard.cover
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                    visible: status === Image.Ready
-                                }
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "♫"
-                                    color: root.theme.accentColor
-                                    font.pixelSize: 28
-                                    visible: coverImage.status !== Image.Ready
-                                }
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: collectionCard.name
-                                color: root.theme.textColor
-                                elide: Text.ElideRight
-                                font.pixelSize: 14
-                                font.weight: Font.DemiBold
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: collectionCard.subtitle
-                                color: root.theme.mutedTextColor
-                                elide: Text.ElideRight
-                                font.pixelSize: 12
-                            }
+                        Text {
+                            width: parent.width
+                            text: collectionCard.name
+                            color: root.theme.textColor
+                            elide: Text.ElideRight
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
                         }
 
-                        onClicked: {
-                            const row = collectionCard.index
-                            Qt.callLater(function() { root.collectionOpened(row) })
+                        Text {
+                            width: parent.width
+                            text: collectionCard.subtitle
+                            color: root.theme.mutedTextColor
+                            elide: Text.ElideRight
+                            font.pixelSize: 12
                         }
+                    }
+
+                    onClicked: {
+                        const id = collectionCard.collectionId
+                        Qt.callLater(function() { root.collectionOpened(id) })
                     }
                 }
             }
-        }
-
-        TrackTable {
-            id: detailTable
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: root.showingDetail
-            theme: root.theme
-            trackModel: root.detailModel
-            sortable: false
-            onTrackActivated: function(row) { root.trackActivated(row) }
-        }
-
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: !root.showingDetail && collectionRepeater.count === 0
 
             Column {
+                visible: collectionGrid.count === 0
                 anchors.centerIn: parent
                 spacing: 13
 
@@ -241,6 +185,17 @@ Item {
                     font.pixelSize: 13
                 }
             }
+        }
+    }
+
+    Component {
+        id: detailComponent
+
+        TrackTable {
+            theme: root.theme
+            trackModel: root.detailModel
+            sortable: false
+            onTrackActivated: function(trackId) { root.trackActivated(trackId) }
         }
     }
 }

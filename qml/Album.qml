@@ -15,7 +15,7 @@ CollectionBrowser {
     selectedName: root.libraryModel.selected_album
     selectedSubtitle: root.libraryModel.selected_album_subtitle
     selectedCover: root.libraryModel.selected_album_cover
-    onCollectionOpened: function(row) { root.libraryModel.open_album(row) }
+    onCollectionOpened: function(collectionId) { root.libraryModel.open_album(collectionId) }
     onCollectionClosed: root.libraryModel.close_album()
-    onTrackActivated: function(row) { root.libraryModel.play_album_track(row) }
+    onTrackActivated: function(trackId) { root.libraryModel.play_album_track(trackId) }
 }

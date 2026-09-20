@@ -4,3 +4,4 @@
 *.db-wal
 .idea/
 .vscode/
+scripts/perf/results/*.txt

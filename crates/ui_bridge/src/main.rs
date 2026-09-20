@@ -1,6 +1,26 @@
-use qmetaobject::QmlEngine;
+use qmetaobject::prelude::*;
+use qmetaobject::{CompilationMode, ComponentStatus, QString, QUrl, QmlComponent, qrc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+qrc!(embedded_qml,
+    "../../qml" as "qml" {
+        "Main.qml",
+        "Library.qml",
+        "Artist.qml",
+        "Album.qml",
+        "Settings.qml",
+        "PlayerBar.qml",
+        "TrackTable.qml",
+        "CollectionBrowser.qml",
+        "CoverImage.qml",
+        "FlatButton.qml",
+        "AccentButton.qml",
+        "Theme.qml",
+        "Qingyin/qmldir",
+        "Qingyin/plugins.qmltypes",
+    }
+);
 
 fn main() {
     tracing_subscriber::fmt()
@@ -13,12 +33,29 @@ fn main() {
         std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
     }
 
+    embedded_qml();
     qingyin_ui_bridge::register_qml_types();
 
     let mut engine = QmlEngine::new();
-    let qml_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../qml/Main.qml");
-    info!(qml_path, "loading QML application");
-    engine.load_file(qml_path.into());
+    engine.add_import_path("qrc:/qml".into());
+    if !qml_root_ready(&engine, "qrc:/qml/Main.qml") {
+        eprintln!("failed to load QML root from qrc:/qml/Main.qml");
+        std::process::exit(1);
+    }
+    engine.load_file("qrc:/qml/Main.qml".into());
+    if std::env::args().any(|argument| argument == "--smoke") {
+        info!("QML loaded, smoke ok");
+        return;
+    }
     info!("QML loaded, entering event loop");
     engine.exec();
+}
+
+fn qml_root_ready(engine: &QmlEngine, url: &str) -> bool {
+    let mut component = QmlComponent::new(engine);
+    component.load_url(
+        QUrl::from(QString::from(url)),
+        CompilationMode::PreferSynchronous,
+    );
+    component.status() == ComponentStatus::Ready
 }

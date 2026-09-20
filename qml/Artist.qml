@@ -15,7 +15,7 @@ CollectionBrowser {
     selectedName: root.libraryModel.selected_artist
     selectedSubtitle: root.libraryModel.selected_artist_subtitle
     selectedCover: root.libraryModel.selected_artist_cover
-    onCollectionOpened: function(row) { root.libraryModel.open_artist(row) }
+    onCollectionOpened: function(collectionId) { root.libraryModel.open_artist(collectionId) }
     onCollectionClosed: root.libraryModel.close_artist()
-    onTrackActivated: function(row) { root.libraryModel.play_artist_track(row) }
+    onTrackActivated: function(trackId) { root.libraryModel.play_artist_track(trackId) }
 }

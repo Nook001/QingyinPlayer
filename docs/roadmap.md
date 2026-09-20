@@ -18,7 +18,7 @@
 
 - 已完成：`AppBridge` 直接实现曲目列表模型，提供 `title`、`artist`、`album`、`duration`、`path` 角色。
 - 已完成：`add_library_folder(url)` 在工作线程扫描，不阻塞 Qt 主线程。
-- 已完成：`play_track(row)` 按模型行加载并播放曲目。
+- 已完成：`play_track(track_id)` 按稳定曲目 ID 加载并播放。
 - 已完成：`toggle_playback()` 在播放和暂停之间切换。
 - 已完成：`play_previous()`、`play_next()` 与 EOS 自动播放下一首。
 - 已完成：`scanning`、`scanStatus`、`playbackState`、当前标题和当前歌手属性。

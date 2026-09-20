@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  QT_QPA_PLATFORM: offscreen
+  QT_QUICK_CONTROLS_STYLE: Basic
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            cmake \
+            pkg-config \
+            libclang-dev \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-declarative-dev \
+            qtdeclarative6-dev-tools \
+            qml6-module-qtquick \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qt-labs-folderlistmodel \
+            qml6-module-qtquick-dialogs \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-tools
+      - name: Install Rust 1.92
+        uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: QML lint
+        run: bash scripts/check-qml.sh
+      - name: QML interaction checks
+        run: bash scripts/qml-interaction-check.sh
+      - name: Missing QML property contract
+        run: |
+          tmp="$(mktemp)"
+          cp qml/Qingyin/plugins.qmltypes "$tmp"
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("qml/Qingyin/plugins.qmltypes")
+          text = path.read_text()
+          path.write_text(text.replace('Property { name: "dark_theme"; type: "bool"; notify: "settings_changed" }', ""))
+          PY
+          set +e
+          bash scripts/check-qml.sh
+          status=$?
+          set -e
+          mv "$tmp" qml/Qingyin/plugins.qmltypes
+          if [ "$status" -eq 0 ]; then
+            echo "qmllint should fail when AppBridge.dark_theme is missing" >&2
+            exit 1
+          fi

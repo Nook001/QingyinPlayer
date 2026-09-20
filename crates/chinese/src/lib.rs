@@ -13,15 +13,28 @@ pub struct SearchKey {
     pub initials: String,
 }
 
-/// Builds a collation key for a display label.
+/// Distinguishes title/album text from person names so surname polyphones stay scoped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReadingContext {
+    #[default]
+    Title,
+    PersonName,
+}
+
+/// Builds a collation key for a display label using title/album readings.
+#[must_use]
+pub fn sort_key(text: &str, tagged_sort: Option<&str>) -> String {
+    sort_key_in(text, tagged_sort, ReadingContext::Title)
+}
+
+/// Builds a collation key, applying surname polyphones only in [`ReadingContext::PersonName`].
 ///
 /// Sort tags such as `ARTISTSORT` win when present. Bracket characters themselves are
 /// ignored so titles like `「极地暗流」 - Narwhal` sort as `极地暗流 - Narwhal`. Labels that
 /// contain kana or Hangul keep their original characters so Japanese and Korean titles
-/// are not forced into Chinese pinyin. Remaining Han characters are transcribed to
-/// toneless pinyin, with a small surname/music override table applied first.
+/// are not forced into Chinese pinyin.
 #[must_use]
-pub fn sort_key(text: &str, tagged_sort: Option<&str>) -> String {
+pub fn sort_key_in(text: &str, tagged_sort: Option<&str>, context: ReadingContext) -> String {
     if let Some(tagged) = tagged_sort.map(str::trim).filter(|value| !value.is_empty()) {
         let stripped = strip_prefix_brackets(tagged);
         return if stripped.is_empty() {
@@ -39,7 +52,7 @@ pub fn sort_key(text: &str, tagged_sort: Option<&str>) -> String {
     if contains_kana_or_hangul(&normalized) {
         return normalized;
     }
-    transcribe_for_sort(&normalized)
+    transcribe_for_sort(&normalized, context)
 }
 
 /// Compares two precomputed collation keys.
@@ -188,12 +201,22 @@ fn is_ignored_bracket(character: char) -> bool {
     )
 }
 
-fn transcribe_for_sort(text: &str) -> String {
+fn transcribe_for_sort(text: &str, context: ReadingContext) -> String {
     let mut key = String::new();
+    let mut at_name_start = matches!(context, ReadingContext::PersonName);
     for character in text.chars() {
-        if let Some(reading) = polyphone_reading(character) {
-            key.push_str(reading);
-        } else if let Some(pinyin) = character.to_pinyin() {
+        if at_name_start && character.is_whitespace() {
+            continue;
+        }
+        if at_name_start {
+            if let Some(reading) = surname_reading(character) {
+                key.push_str(reading);
+                at_name_start = false;
+                continue;
+            }
+            at_name_start = false;
+        }
+        if let Some(pinyin) = character.to_pinyin() {
             key.push_str(pinyin.plain());
         } else if !is_ignored_bracket(character) {
             key.push(character);
@@ -202,7 +225,7 @@ fn transcribe_for_sort(text: &str) -> String {
     key
 }
 
-fn polyphone_reading(character: char) -> Option<&'static str> {
+fn surname_reading(character: char) -> Option<&'static str> {
     Some(match character {
         '曾' => "zeng",
         '单' => "shan",
@@ -305,13 +328,43 @@ mod tests {
     }
 
     #[test]
-    fn polyphone_surnames_use_the_music_reading() {
-        let key = sort_key("曾轶可", None).to_lowercase();
+    fn polyphone_surnames_use_the_person_reading() {
+        let key = sort_key_in("曾轶可", None, ReadingContext::PersonName).to_lowercase();
         assert!(key.starts_with("zeng"), "{key}");
         assert!(!key.starts_with("ceng"), "{key}");
         assert_eq!(
-            sort_key("单田芳", None).to_lowercase().chars().next(),
+            sort_key_in("单田芳", None, ReadingContext::PersonName)
+                .to_lowercase()
+                .chars()
+                .next(),
             Some('s')
+        );
+    }
+
+    #[test]
+    fn title_readings_are_not_overridden_by_surnames() {
+        for title in ["快乐", "音乐", "单纯", "曾经"] {
+            let title_key = sort_key_in(title, None, ReadingContext::Title).to_lowercase();
+            let search = search_key(title);
+            assert_eq!(
+                title_key, search.full_pinyin,
+                "{title} title sort should match search readings"
+            );
+        }
+        assert!(
+            sort_key_in("快乐", None, ReadingContext::Title)
+                .to_lowercase()
+                .ends_with("le"),
+            "{}",
+            sort_key_in("快乐", None, ReadingContext::Title)
+        );
+        assert_ne!(
+            sort_key_in("单纯", None, ReadingContext::Title).to_lowercase(),
+            sort_key_in("单纯", None, ReadingContext::PersonName).to_lowercase()
+        );
+        assert_ne!(
+            sort_key_in("曾经", None, ReadingContext::Title).to_lowercase(),
+            sort_key_in("曾经", None, ReadingContext::PersonName).to_lowercase()
         );
     }
 

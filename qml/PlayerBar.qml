@@ -11,12 +11,22 @@ Rectangle {
     required property var playerBackend
 
     color: root.theme.surfaceColor
+    focus: true
 
     function formatTime(milliseconds) {
         const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
         const minutes = Math.floor(totalSeconds / 60)
         const seconds = totalSeconds % 60
         return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+    }
+
+    Keys.onLeftPressed: {
+        if (root.playerBackend.current_title !== "")
+            root.playerBackend.seek_to(root.playerBackend.playback_position - 5000)
+    }
+    Keys.onRightPressed: {
+        if (root.playerBackend.current_title !== "")
+            root.playerBackend.seek_to(root.playerBackend.playback_position + 5000)
     }
 
     Rectangle {
@@ -34,29 +44,10 @@ Rectangle {
             (parent.width - Math.min(420, parent.width * 0.42)) / 2 - 44))
         spacing: 14
 
-        Rectangle {
-            Layout.preferredWidth: 54
-            Layout.preferredHeight: 54
-            color: root.theme.artworkColor
-            radius: 5
-            clip: true
-
-            Image {
-                id: currentCover
-                anchors.fill: parent
-                source: root.playerBackend.current_cover
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                visible: status === Image.Ready
-            }
-
-            Text {
-                anchors.centerIn: parent
-                text: "♫"
-                color: root.theme.accentColor
-                font.pixelSize: 23
-                visible: currentCover.status !== Image.Ready
-            }
+        CoverImage {
+            displaySize: 54
+            theme: root.theme
+            source: root.playerBackend.current_cover
         }
 
         ColumnLayout {
@@ -95,85 +86,34 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 8
 
-            Button {
-                id: playPreviousButton
-
-                implicitWidth: 44
-                implicitHeight: 40
-                flat: true
-                hoverEnabled: true
+            FlatButton {
+                preferredWidth: 44
+                preferredHeight: 40
+                theme: root.theme
+                text: "◀|"
                 enabled: root.playerBackend.current_title !== ""
                 Accessible.name: "上一首"
                 onClicked: Qt.callLater(function() { root.playerBackend.play_previous() })
-
-                contentItem: Text {
-                    text: "◀|"
-                    color: root.theme.textColor
-                    opacity: playPreviousButton.enabled ? 1 : 0.35
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 16
-                }
-
-                background: Rectangle {
-                    color: playPreviousButton.hovered && playPreviousButton.enabled
-                        ? root.theme.hoverColor : "transparent"
-                    radius: 4
-                }
             }
 
-            Button {
-                id: togglePlaybackButton
-
-                implicitWidth: 46
-                implicitHeight: 46
-                flat: true
-                hoverEnabled: true
+            FlatButton {
+                preferredWidth: 46
+                preferredHeight: 46
+                theme: root.theme
+                text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
                 enabled: root.playerBackend.current_title !== ""
                 Accessible.name: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
                 onClicked: Qt.callLater(function() { root.playerBackend.toggle_playback() })
-
-                contentItem: Text {
-                    text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
-                    color: root.theme.textColor
-                    opacity: togglePlaybackButton.enabled ? 1 : 0.35
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 18
-                }
-
-                background: Rectangle {
-                    color: togglePlaybackButton.hovered && togglePlaybackButton.enabled
-                        ? root.theme.hoverColor : "transparent"
-                    radius: 4
-                }
             }
 
-            Button {
-                id: playNextButton
-
-                implicitWidth: 44
-                implicitHeight: 40
-                flat: true
-                hoverEnabled: true
+            FlatButton {
+                preferredWidth: 44
+                preferredHeight: 40
+                theme: root.theme
+                text: "|▶"
                 enabled: root.playerBackend.current_title !== ""
                 Accessible.name: "下一首"
                 onClicked: Qt.callLater(function() { root.playerBackend.play_next() })
-
-                contentItem: Text {
-                    text: "|▶"
-                    color: root.theme.textColor
-                    opacity: playNextButton.enabled ? 1 : 0.35
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 16
-                }
-
-                background: Rectangle {
-                    color: playNextButton.hovered && playNextButton.enabled
-                        ? root.theme.hoverColor : "transparent"
-                    radius: 4
-                }
             }
         }
 
@@ -199,6 +139,15 @@ Rectangle {
                 to: Math.max(1, root.playerBackend.playback_duration)
                 enabled: root.playerBackend.current_title !== ""
                     && root.playerBackend.playback_duration > 0
+                focus: true
+                Keys.onLeftPressed: {
+                    const position = Math.max(0, Math.round(value) - 5000)
+                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
+                }
+                Keys.onRightPressed: {
+                    const position = Math.min(to, Math.round(value) + 5000)
+                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
+                }
                 onPressedChanged: if (!pressed && enabled) {
                     const position = Math.round(value)
                     Qt.callLater(function() { root.playerBackend.seek_to(position) })
@@ -272,6 +221,8 @@ Rectangle {
             enabled: root.playerBackend.current_title !== ""
             value: root.playerBackend.player_volume
             onMoved: root.playerBackend.set_player_volume(value)
+            onPressedChanged: if (!pressed)
+                root.playerBackend.flush_volume()
 
             background: Rectangle {
                 x: volumeSlider.leftPadding

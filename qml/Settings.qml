@@ -10,6 +10,7 @@ Item {
     required property var theme
     required property bool darkMode
     required property string musicFolders
+    property string settingsError
     signal themeRequested(bool dark)
 
     ColumnLayout {
@@ -116,6 +117,15 @@ Item {
             text: "尚未添加音乐文件夹"
             color: root.theme.mutedTextColor
             font.pixelSize: 13
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: root.settingsError.trim() !== ""
+            text: root.settingsError
+            color: root.theme.accentPressedColor
+            font.pixelSize: 13
+            wrapMode: Text.Wrap
         }
 
         Item { Layout.fillHeight: true }
