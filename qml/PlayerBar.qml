@@ -12,6 +12,26 @@ Item {
 
     focus: true
 
+    property real lastAudibleVolume: 0.7
+    readonly property bool muted: root.playerBackend.player_volume <= 0.001
+
+    function toggleMute() {
+        if (root.muted) {
+            const restore = root.lastAudibleVolume > 0.001 ? root.lastAudibleVolume : 0.7
+            root.playerBackend.set_player_volume(restore)
+        } else {
+            if (root.playerBackend.player_volume > 0.001)
+                root.lastAudibleVolume = root.playerBackend.player_volume
+            root.playerBackend.set_player_volume(0)
+        }
+        root.playerBackend.flush_volume()
+    }
+
+    Component.onCompleted: {
+        if (root.playerBackend.player_volume > 0.001)
+            root.lastAudibleVolume = root.playerBackend.player_volume
+    }
+
     RoundedRect {
         anchors.fill: parent
         color: root.theme.surfaceColor
@@ -38,11 +58,11 @@ Item {
 
     RowLayout {
         anchors.left: parent.left
-        anchors.leftMargin: 22
+        anchors.leftMargin: 16
+        anchors.right: transportColumn.left
+        anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(250, Math.max(150,
-            (parent.width - Math.min(420, parent.width * 0.42)) / 2 - 44))
-        spacing: 12
+        spacing: 10
 
         CoverImage {
             displaySize: 48
@@ -77,9 +97,10 @@ Item {
     }
 
     Column {
+        id: transportColumn
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(420, parent.width * 0.42)
+        width: Math.min(280, Math.max(180, parent.width - 220))
         spacing: 6
 
         RowLayout {
@@ -206,62 +227,111 @@ Item {
         }
     }
 
-    RowLayout {
-        anchors.right: parent.right
-        anchors.rightMargin: 22
-        anchors.verticalCenter: parent.verticalCenter
-        width: 130
-        spacing: 8
+    Item {
+        id: volumeCluster
 
-        Icon {
-            name: "volume"
-            size: 16
-            color: root.theme.mutedTextColor
+        anchors.right: parent.right
+        anchors.rightMargin: 10
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Math.round((root.height - volumeButton.preferredHeight) / 2)
+        width: 36
+        height: volumeButton.preferredHeight
+            + (volumeCluster.expanded ? volumePanel.height + 6 : 0)
+        z: 20
+        clip: false
+
+        readonly property bool expanded: volumeHover.hovered || volumeSlider.pressed
+
+        HoverHandler {
+            id: volumeHover
         }
 
-        Slider {
-            id: volumeSlider
+        RoundedRect {
+            id: volumePanel
+            visible: volumeCluster.expanded
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 32
+            height: 112
+            radius: 16
+            color: root.theme.surfaceColor
+            borderColor: root.theme.dividerColor
+            borderWidth: 1
 
-            Layout.fillWidth: true
-            from: 0
-            to: 1
-            enabled: root.playerBackend.current_title !== ""
-            value: root.playerBackend.player_volume
-            onMoved: root.playerBackend.set_player_volume(value)
-            onPressedChanged: if (!pressed)
-                root.playerBackend.flush_volume()
+            Slider {
+                id: volumeSlider
 
-            background: Rectangle {
-                x: volumeSlider.leftPadding
-                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
-                implicitHeight: 4
-                width: volumeSlider.availableWidth
-                height: 4
-                radius: 2
-                antialiasing: true
-                color: root.theme.dividerColor
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.topMargin: 10
+                anchors.bottomMargin: 10
+                width: 24
+                orientation: Qt.Vertical
+                from: 0
+                to: 1
+                onMoved: {
+                    root.playerBackend.set_player_volume(value)
+                    if (value > 0.001)
+                        root.lastAudibleVolume = value
+                }
+                onPressedChanged: if (!pressed)
+                    root.playerBackend.flush_volume()
 
-                Rectangle {
-                    width: volumeSlider.visualPosition * parent.width
-                    height: parent.height
+                Binding {
+                    target: volumeSlider
+                    property: "value"
+                    value: root.playerBackend.player_volume
+                    when: !volumeSlider.pressed
+                    restoreMode: Binding.RestoreNone
+                }
+
+                background: Rectangle {
+                    x: volumeSlider.leftPadding + (volumeSlider.availableWidth - width) / 2
+                    y: volumeSlider.topPadding
+                    implicitWidth: 4
+                    implicitHeight: 92
+                    width: 4
+                    height: volumeSlider.availableHeight
                     radius: 2
                     antialiasing: true
+                    color: root.theme.dividerColor
+
+                    Rectangle {
+                        width: parent.width
+                        height: (1 - volumeSlider.visualPosition) * parent.height
+                        anchors.bottom: parent.bottom
+                        radius: 2
+                        antialiasing: true
+                        color: root.theme.accentColor
+                    }
+                }
+
+                handle: RoundedRect {
+                    x: volumeSlider.leftPadding + (volumeSlider.availableWidth - width) / 2
+                    y: volumeSlider.topPadding + volumeSlider.visualPosition
+                        * (volumeSlider.availableHeight - height)
+                    implicitWidth: 10
+                    implicitHeight: 10
+                    width: 10
+                    height: 10
+                    radius: 5
                     color: root.theme.accentColor
                 }
             }
+        }
 
-            handle: RoundedRect {
-                x: volumeSlider.leftPadding + volumeSlider.visualPosition
-                    * (volumeSlider.availableWidth - width)
-                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
-                implicitWidth: 10
-                implicitHeight: 10
-                width: 10
-                height: 10
-                radius: 5
-                visible: volumeSlider.enabled
-                color: root.theme.accentColor
-            }
+        FlatButton {
+            id: volumeButton
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            preferredWidth: 36
+            preferredHeight: 36
+            iconName: root.muted ? "volumeMuted" : "volume"
+            iconSize: 16
+            theme: root.theme
+            Accessible.name: root.muted ? "取消静音" : "静音"
+            onClicked: root.toggleMute()
         }
     }
 }

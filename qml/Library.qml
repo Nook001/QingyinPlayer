@@ -143,7 +143,7 @@ Item {
                 Layout.preferredHeight: 32
                 placeholderText: "搜索歌曲"
                 leftPadding: 32
-                rightPadding: 12
+                rightPadding: searchField.text !== "" ? 34 : 12
                 font.pixelSize: 13
                 color: root.theme.textColor
                 onTextChanged: {
@@ -169,6 +169,39 @@ Item {
                         name: "search"
                         size: 14
                         color: root.theme.mutedTextColor
+                    }
+                }
+
+                MouseArea {
+                    id: clearSearch
+                    visible: searchField.text !== ""
+                    width: 22
+                    height: 22
+                    anchors.right: parent.right
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    z: 2
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "清空搜索"
+                    onClicked: {
+                        searchField.clear()
+                        searchField.forceActiveFocus()
+                    }
+
+                    RoundedRect {
+                        anchors.fill: parent
+                        radius: 11
+                        color: clearSearch.containsMouse ? root.theme.hoverColor : "transparent"
+                    }
+
+                    Icon {
+                        anchors.centerIn: parent
+                        name: "close"
+                        size: 12
+                        color: clearSearch.containsMouse
+                            ? root.theme.textColor : root.theme.mutedTextColor
                     }
                 }
             }

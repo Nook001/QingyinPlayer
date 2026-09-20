@@ -38,8 +38,16 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 12
-            Layout.rightMargin: 12
+            Layout.rightMargin: 22
             spacing: 14
+
+            Text {
+                Layout.preferredWidth: 36
+                text: "#"
+                color: root.theme.mutedTextColor
+                horizontalAlignment: Text.AlignRight
+                font.pixelSize: 12
+            }
 
             Text {
                 Layout.preferredWidth: 44
@@ -89,108 +97,130 @@ Item {
             }
         }
 
-        ListView {
-            id: trackList
-
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            reuseItems: true
-            cacheBuffer: 580
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.trackModel
-            spacing: 2
-            footerPositioning: ListView.InlineFooter
-            footer: Item {
-                width: trackList.width
-                height: root.endSpacerCount * (root.rowHeight + trackList.spacing)
-            }
 
-            delegate: ItemDelegate {
-                id: trackRow
+            ListView {
+                id: trackList
 
-                required property int index
-                required property string title
-                required property string artist
-                required property string album
-                required property string duration
-                required property string cover
-                required property int trackId
-
-                width: ListView.view ? ListView.view.width : 0
-                height: 58
-                padding: 0
-                hoverEnabled: true
-                text: trackRow.title
-                Accessible.name: trackRow.title
-
-                ListView.onPooled: trackRow.highlighted = false
-                ListView.onReused: trackRow.highlighted = false
-
-                    background: RoundedRect {
-                    color: trackRow.hovered ? root.theme.hoverColor : "transparent"
-                    radius: 5
+                anchors.fill: parent
+                clip: true
+                reuseItems: true
+                cacheBuffer: 580
+                boundsBehavior: Flickable.StopAtBounds
+                highlightMoveDuration: 0
+                highlightResizeDuration: 0
+                model: root.trackModel
+                spacing: 2
+                footerPositioning: ListView.InlineFooter
+                footer: Item {
+                    width: trackList.width
+                    height: root.endSpacerCount * (root.rowHeight + trackList.spacing)
                 }
 
-                contentItem: RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 14
+                delegate: ItemDelegate {
+                    id: trackRow
 
-                    CoverImage {
-                        displaySize: 44
-                        theme: root.theme
-                        source: trackRow.cover
+                    required property int index
+                    required property string title
+                    required property string artist
+                    required property string album
+                    required property string duration
+                    required property string cover
+                    required property int trackId
+
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 58
+                    padding: 0
+                    hoverEnabled: true
+                    text: trackRow.title
+                    Accessible.name: trackRow.title
+
+                    ListView.onPooled: trackRow.highlighted = false
+                    ListView.onReused: trackRow.highlighted = false
+
+                    background: RoundedRect {
+                        color: trackRow.hovered ? root.theme.hoverColor : "transparent"
+                        radius: 5
                     }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
+                    contentItem: RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 22
+                        spacing: 14
 
                         Text {
+                            Layout.preferredWidth: 36
+                            text: String(trackRow.index + 1)
+                            color: root.theme.mutedTextColor
+                            horizontalAlignment: Text.AlignRight
+                            font.pixelSize: 12
+                        }
+
+                        CoverImage {
+                            displaySize: 44
+                            theme: root.theme
+                            source: trackRow.cover
+                        }
+
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignLeft
-                            text: trackRow.title
-                            color: root.theme.textColor
-                            elide: Text.ElideRight
-                            horizontalAlignment: Text.AlignLeft
-                            font.pixelSize: 14
-                            font.weight: Font.DemiBold
+                            spacing: 2
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignLeft
+                                text: trackRow.title
+                                color: root.theme.textColor
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignLeft
+                                font.pixelSize: 14
+                                font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignLeft
+                                text: trackRow.artist || "未知歌手"
+                                color: root.theme.mutedTextColor
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignLeft
+                                font.pixelSize: 12
+                            }
                         }
 
                         Text {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignLeft
-                            text: trackRow.artist || "未知歌手"
+                            Layout.preferredWidth: 190
+                            text: trackRow.album
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
-                            horizontalAlignment: Text.AlignLeft
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            Layout.preferredWidth: 48
+                            text: trackRow.duration
+                            color: root.theme.mutedTextColor
+                            horizontalAlignment: Text.AlignRight
                             font.pixelSize: 12
                         }
                     }
 
-                    Text {
-                        Layout.preferredWidth: 190
-                        text: trackRow.album
-                        color: root.theme.mutedTextColor
-                        elide: Text.ElideRight
-                        font.pixelSize: 12
-                    }
-
-                    Text {
-                        Layout.preferredWidth: 48
-                        text: trackRow.duration
-                        color: root.theme.mutedTextColor
-                        horizontalAlignment: Text.AlignRight
-                        font.pixelSize: 12
+                    onDoubleClicked: {
+                        const id = trackRow.trackId
+                        Qt.callLater(function() { root.trackActivated(id) })
                     }
                 }
+            }
 
-                onDoubleClicked: {
-                    const id = trackRow.trackId
-                    Qt.callLater(function() { root.trackActivated(id) })
-                }
+            PageScrollBar {
+                anchors.top: trackList.top
+                anchors.right: trackList.right
+                anchors.bottom: trackList.bottom
+                theme: root.theme
+                scroller: trackList
             }
         }
     }

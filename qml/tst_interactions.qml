@@ -103,6 +103,16 @@ Item {
             keyClick(Qt.Key_Left)
             tryVerify(function() { return playerMock.lastSeek === 3000 || playerMock.lastSeek === 0 })
         }
+
+        function test_mute_toggles_volume() {
+            compare(playerMock.player_volume, 0.5)
+            bar.toggleMute()
+            compare(playerMock.player_volume, 0)
+            verify(bar.muted)
+            bar.toggleMute()
+            compare(playerMock.player_volume, 0.5)
+            verify(!bar.muted)
+        }
     }
 
     TestCase {

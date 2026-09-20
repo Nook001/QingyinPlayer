@@ -259,12 +259,10 @@ ApplicationWindow {
 
                 PlayerBar {
                     id: playerBar
-                    anchors.left: parent.left
-                    anchors.right: parent.right
+                    anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
                     anchors.bottomMargin: 12
+                    width: Math.min(parent.width - 96, 600)
                     height: 80
                     theme: appTheme
                     playerBackend: backend.playback

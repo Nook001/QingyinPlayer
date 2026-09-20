@@ -114,6 +114,7 @@ Item {
                 }
                 Component.onCompleted: contentY = Math.max(0, root.savedGridY)
                 onContentYChanged: root.savedGridY = contentY
+                highlightMoveDuration: 0
 
                 delegate: ItemDelegate {
                     id: collectionCard
@@ -170,6 +171,14 @@ Item {
                         Qt.callLater(function() { root.collectionOpened(id) })
                     }
                 }
+            }
+
+            PageScrollBar {
+                anchors.top: collectionGrid.top
+                anchors.right: collectionGrid.right
+                anchors.bottom: collectionGrid.bottom
+                theme: root.theme
+                scroller: collectionGrid
             }
 
             Column {

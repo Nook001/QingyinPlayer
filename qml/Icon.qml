@@ -37,6 +37,10 @@ Item {
             return "M18 5v14M6 5v14l10-7z"
         case "volume":
             return "M11 5L6 9H2v6h4l5 4zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"
+        case "volumeMuted":
+            return "M11 5L6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6"
+        case "close":
+            return "M18 6L6 18M6 6l12 12"
         case "search":
             return "M19 11a8 8 0 1 1-16 0 8 8 0 1 1 16 0M21 21l-4.35-4.35"
         case "folderPlus":
