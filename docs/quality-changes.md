@@ -126,7 +126,7 @@
 - [x] **Q-30** 中 · 抽出 `PlaybackController`（或同名 QObject）  
   完成：load/play/EOS/进度/音量不写在列表模型里；`PlayerBar` 绑控制器。
 
-- [ ] **Q-31** 中 · 扫描 + 监听回调收到独立的 library session 类型  
+- [x] **Q-31** 中 · 扫描 + 监听回调收到独立的 library session 类型  
   完成：`queued_callback` 不再直接把 IO 细节塞进巨型 `AppBridge` 方法列表。
 
 - [ ] **Q-32** 中 · 工作线程回调携带 `thiserror` 枚举，而不是 `String`  

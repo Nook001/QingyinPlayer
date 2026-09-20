@@ -287,7 +287,7 @@ ApplicationWindow {
         id: libraryPage
         Library {
             theme: window
-            session: backend
+            session: backend.library
         }
     }
 
@@ -295,7 +295,7 @@ ApplicationWindow {
         id: artistPage
         Artist {
             theme: window
-            libraryModel: backend
+            libraryModel: backend.library
         }
     }
 
@@ -303,7 +303,7 @@ ApplicationWindow {
         id: albumPage
         Album {
             theme: window
-            libraryModel: backend
+            libraryModel: backend.library
         }
     }
 
