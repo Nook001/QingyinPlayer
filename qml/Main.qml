@@ -65,11 +65,8 @@ ApplicationWindow {
     font.family: "Noto Sans CJK SC"
 
     function navButtonBackground(button, selected) {
-        if (button.down)
-            return appTheme.sidebarSelectedColor
-        if (selected || button.hovered)
-            return appTheme.sidebarSelectedColor
-        return "transparent"
+        return button.down || selected || button.hovered
+            ? appTheme.sidebarSelectedColor : "transparent"
     }
 
     RowLayout {
@@ -133,7 +130,7 @@ ApplicationWindow {
                         Accessible.name: navigationButton.modelData.label
                         onClicked: {
                             const view = navigationButton.index
-                            Qt.callLater(function() { window.currentView = view })
+                            Qt.callLater(() => { window.currentView = view })
                         }
 
                         background: RoundedRect {
@@ -195,7 +192,7 @@ ApplicationWindow {
                     flat: true
                     hoverEnabled: true
                     Accessible.name: "设置"
-                    onClicked: Qt.callLater(function() { window.currentView = 3 })
+                    onClicked: Qt.callLater(() => { window.currentView = 3 })
 
                     background: RoundedRect {
                         radius: 6

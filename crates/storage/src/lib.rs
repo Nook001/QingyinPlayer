@@ -311,9 +311,8 @@ impl Database {
     ///
     /// Returns [`StorageError`] when the path is invalid or SQLite cannot delete the rows.
     pub fn remove_tracks_under(&self, directory: impl AsRef<Path>) -> Result<usize, StorageError> {
-        let (directory, prefix) = match prefix_bounds(directory.as_ref())? {
-            Some(bounds) => bounds,
-            None => return Ok(0),
+        let Some((directory, prefix)) = prefix_bounds(directory.as_ref())? else {
+            return Ok(0);
         };
         let deleted = self.connection.execute(
             "DELETE FROM tracks WHERE path = ?1 OR path GLOB ?2",
@@ -331,9 +330,8 @@ impl Database {
         &self,
         directory: impl AsRef<Path>,
     ) -> Result<Vec<TrackRef>, StorageError> {
-        let (directory, prefix) = match prefix_bounds(directory.as_ref())? {
-            Some(bounds) => bounds,
-            None => return Ok(Vec::new()),
+        let Some((directory, prefix)) = prefix_bounds(directory.as_ref())? else {
+            return Ok(Vec::new());
         };
         let mut statement = self.connection.prepare_cached(
             "SELECT id, path, modified_at_ns, file_size FROM tracks

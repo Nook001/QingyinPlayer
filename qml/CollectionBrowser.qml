@@ -44,7 +44,7 @@ Item {
                 theme: root.theme
                 iconName: "chevronLeft"
                 Accessible.name: "返回"
-                onClicked: Qt.callLater(function() { root.collectionClosed() })
+                onClicked: Qt.callLater(() => root.collectionClosed())
             }
 
             CoverImage {
@@ -168,7 +168,7 @@ Item {
 
                     onClicked: {
                         const id = collectionCard.collectionId
-                        Qt.callLater(function() { root.collectionOpened(id) })
+                        Qt.callLater(() => root.collectionOpened(id))
                     }
                 }
             }
@@ -211,7 +211,7 @@ Item {
             theme: root.theme
             trackModel: root.detailModel
             sortable: false
-            onTrackActivated: function(trackId) { root.trackActivated(trackId) }
+            onTrackActivated: (trackId) => root.trackActivated(trackId)
         }
     }
 }

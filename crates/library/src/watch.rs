@@ -234,14 +234,14 @@ pub fn watch_directories(
                     overflow = true;
                     pending.clear();
                     quiet_deadline = Some(Instant::now() + QUIET_WINDOW);
-                    max_deadline = Some(max_deadline.unwrap_or_else(|| Instant::now() + MAX_WAIT));
+                    max_deadline.get_or_insert_with(|| Instant::now() + MAX_WAIT);
                 }
                 Some(Ok(WatchMessage::Paths(paths))) => {
                     pending.extend(paths);
                     merge_covering_paths(&mut pending);
                     let now = Instant::now();
                     quiet_deadline = Some(now + QUIET_WINDOW);
-                    max_deadline = Some(max_deadline.unwrap_or(now + MAX_WAIT));
+                    max_deadline.get_or_insert(now + MAX_WAIT);
                 }
                 Some(Err(())) => {
                     if remounted_failed_roots(&worker_status) {

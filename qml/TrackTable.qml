@@ -229,7 +229,7 @@ Item {
 
                     onDoubleClicked: {
                         const id = trackRow.trackId
-                        Qt.callLater(function() { root.trackActivated(id) })
+                        Qt.callLater(() => root.trackActivated(id))
                     }
                 }
             }

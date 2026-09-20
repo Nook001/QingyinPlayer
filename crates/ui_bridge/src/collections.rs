@@ -33,11 +33,11 @@ fn track_role_names() -> HashMap<i32, QByteArray> {
 
 fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
     match role {
-        TRACK_TITLE_ROLE => QString::from(track.title.clone()).into(),
+        TRACK_TITLE_ROLE => QString::from(track.title.as_str()).into(),
         TRACK_ARTIST_ROLE => QString::from(track.artists.join("、")).into(),
-        TRACK_ALBUM_ROLE => QString::from(track.album.clone().unwrap_or_default()).into(),
+        TRACK_ALBUM_ROLE => QString::from(track.album.as_deref().unwrap_or_default()).into(),
         TRACK_DURATION_ROLE => QString::from(crate::format_duration(track)).into(),
-        TRACK_PATH_ROLE => QString::from(track.path.to_string_lossy().into_owned()).into(),
+        TRACK_PATH_ROLE => QString::from(track.path.to_string_lossy().as_ref()).into(),
         TRACK_COVER_ROLE => QString::from(cover).into(),
         TRACK_ID_ROLE => track.id.into(),
         _ => QVariant::default(),

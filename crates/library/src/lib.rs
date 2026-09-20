@@ -339,7 +339,7 @@ fn scan_music_directory(
         .into_iter()
         .map(|track| (track.path, track.fingerprint))
         .collect();
-    let mut summary = import_audio_files(database, &paths, &existing, &mut on_event)?;
+    let mut summary = import_audio_files(database, &paths, &existing, &mut on_event);
     summary.failed_subtrees = failed_subtrees;
     summary.complete = complete && summary.failed_subtrees.is_empty();
     if summary.complete {
@@ -353,7 +353,7 @@ fn import_audio_files(
     paths: &[PathBuf],
     existing: &HashMap<PathBuf, FileFingerprint>,
     on_event: &mut impl FnMut(ScanEvent<'_>),
-) -> Result<ScanSummary, LibraryError> {
+) -> ScanSummary {
     let mut summary = ScanSummary {
         discovered: paths.len(),
         ..ScanSummary::default()
@@ -369,13 +369,10 @@ fn import_audio_files(
                 continue;
             }
         };
-        match existing.get(path).copied() {
-            Some(stored) if stored == fingerprint => {
-                on_event(ScanEvent::Unchanged { path, fingerprint });
-                summary.unchanged += 1;
-                continue;
-            }
-            _ => {}
+        if existing.get(path) == Some(&fingerprint) {
+            on_event(ScanEvent::Unchanged { path, fingerprint });
+            summary.unchanged += 1;
+            continue;
         }
         match read_tagged_track(path) {
             Ok((mut track, cover)) => {
@@ -392,7 +389,7 @@ fn import_audio_files(
         }
     }
     flush_pending(database, &mut pending, on_event, &mut summary);
-    Ok(summary)
+    summary
 }
 
 fn flush_pending(
@@ -912,24 +909,17 @@ enum AlbumKey {
 }
 
 fn album_key(track: &TrackMetadata) -> AlbumKey {
-    match track
+    let Some(title) = track
         .album
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        None => AlbumKey::UnknownAlbum,
-        Some(title) => AlbumKey::Album {
-            title: identity_key(title),
-            album_artist: identity_key(
-                track
-                    .album_artist
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or(""),
-            ),
-        },
+    else {
+        return AlbumKey::UnknownAlbum;
+    };
+    AlbumKey::Album {
+        title: identity_key(title),
+        album_artist: identity_key(track.album_artist.as_deref().unwrap_or_default().trim()),
     }
 }
 

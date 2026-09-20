@@ -94,11 +94,7 @@ impl PlaybackEngine {
                 {
                     self.pending_command = None;
                 }
-                if let Some(error) = error {
-                    self.apply_failure(error)
-                } else {
-                    NotifySet::default()
-                }
+                error.map_or_else(NotifySet::default, |error| self.apply_failure(error))
             }
             PlayerEvent::StateChanged { generation, state } => {
                 if generation != self.generation {

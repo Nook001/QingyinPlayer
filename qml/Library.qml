@@ -233,8 +233,8 @@ Item {
             sortColumn: String(root.session.sort_column_name)
             sortAscending: root.session.sort_ascending
             visible: count > 0 && !root.waitingForSearch
-            onTrackActivated: function(trackId) { root.session.play_track(trackId) }
-            onSortRequested: function(column) { root.session.set_sort(column) }
+            onTrackActivated: (trackId) => root.session.play_track(trackId)
+            onSortRequested: (column) => root.session.set_sort(column)
             onContentYChanged: root.savedContentY = contentY
         }
 

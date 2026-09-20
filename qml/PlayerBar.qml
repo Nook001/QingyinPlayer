@@ -92,15 +92,15 @@ Item {
         live: true
         Keys.onLeftPressed: {
             const position = Math.max(0, Math.round(value) - 5000)
-            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+            Qt.callLater(() => root.playerBackend.seek_to(position))
         }
         Keys.onRightPressed: {
             const position = Math.min(to, Math.round(value) + 5000)
-            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+            Qt.callLater(() => root.playerBackend.seek_to(position))
         }
         onPressedChanged: if (!pressed && enabled) {
             const position = Math.round(value)
-            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+            Qt.callLater(() => root.playerBackend.seek_to(position))
         }
 
         Binding {
@@ -126,7 +126,7 @@ Item {
         const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
         const minutes = Math.floor(totalSeconds / 60)
         const seconds = totalSeconds % 60
-        return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+        return `${minutes}:${String(seconds).padStart(2, "0")}`
     }
 
     Keys.onLeftPressed: {
