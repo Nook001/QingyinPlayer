@@ -287,7 +287,7 @@ ApplicationWindow {
         id: libraryPage
         Library {
             theme: window
-            libraryModel: backend
+            session: backend
         }
     }
 

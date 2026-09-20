@@ -27,10 +27,7 @@
 
 - [`TrackMetadata`](../crates/metadata/src/lib.rs) 已定义路径、标题、专辑、歌手、时长和可选排序标签，
   并支持 serde 序列化与反序列化。排序键在读取或从 SQLite 加载时计算一次。
-- [`PlaybackQueue`](../crates/core/src/lib.rs) 已实现 `push`、`pop`、`len` 和
-  `is_empty`。
 - [`Settings`](../crates/core/src/lib.rs) 已定义音乐目录、主题、音量和排序，并支持 TOML 读写。
-- [`AppCore`](../crates/core/src/lib.rs) 已聚合曲库、播放队列、播放状态和设置。
 
 ### 中文搜索与排序
 
@@ -84,7 +81,7 @@
 
 - [`AppBridge`](../crates/ui_bridge/src/lib.rs) 已注册为 `Qingyin 1.0/AppBridge`。
 - QML 可调用 `application_name()` 和 `version()`。
-- `AppBridge` 已实现 `QAbstractListModel`，提供标题、歌手、专辑、时长、路径和封面角色。
+- 曲库表绑定独立的 `TrackListModel`（标题、歌手、专辑、时长、路径、封面），与会话对象分开；详情列表共用同一套角色映射。
 - 文件夹扫描在工作线程执行，并通过 Qt queued callback 在主线程重置曲库模型。
 - QML 可调用 `add_library_folder`、`play_track`、`toggle_playback`、`play_previous` 和
   `play_next`。
@@ -104,7 +101,7 @@
 
 | 模块 | 当前已有 | 尚未贯通 |
 | --- | --- | --- |
-| Core | `AppCore`、队列、TOML 设置读写 | 未建立完整应用服务生命周期 |
+| Core | TOML 设置读写 | 未建立完整应用服务生命周期；播放队列尚未实现 |
 | Player | `playbin`、播放/暂停/停止、位置、seek、音量、EOS 与错误事件 | 尚无主动状态变化事件 |
 | Metadata | 标签、时长与封面读取、标题回退 | 超过缓存输入上限的封面会降级为占位图 |
 | Library | 递归增量扫描、失败摘要、数据库持久化、歌手/专辑聚合、运行期文件监听 | 细粒度扫描进度仍未按文件回调 |

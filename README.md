@@ -51,7 +51,7 @@ qingyin/
 │   ├── storage/      # SQLite schema、upsert、搜索
 │   ├── library/      # 扫描、增量刷新、监听、歌手/专辑聚合
 │   ├── player/       # GStreamer 播放
-│   ├── core/         # 设置（TOML）；AppCore / 队列目前未被 UI 使用
+│   ├── core/         # 设置（TOML）
 │   └── ui_bridge/    # 应用入口、AppBridge、封面缓存
 ├── qml/              # Qt Quick 界面
 ├── docs/
@@ -76,7 +76,7 @@ qingyin/
                      ▼
 ┌──────────────────────────────────────────┐
 │         ui_bridge · AppBridge            │
-│  可见曲目模型 · 歌手/专辑模型 · 播放会话   │
+│  TrackListModel · 歌手/专辑模型 · 播放会话 │
 └──────┬──────────┬──────────┬─────────────┘
        │          │          │
        ▼          ▼          ▼
@@ -86,7 +86,7 @@ qingyin/
    chinese
 ```
 
-运行时真正的编排者是 `AppBridge`，不是 `AppCore`。`AppCore` / `PlaybackQueue` 仍保留在 `core` crate 中，但 UI 与播放路径并未经过它们。
+运行时真正的编排者是 `AppBridge`。曲库表绑定独立的 `TrackListModel`，不把整个会话对象当成列表模型。
 
 ## 模块依赖
 
@@ -108,9 +108,6 @@ flowchart BT
   library --> chinese
   library --> metadata
   library --> storage
-  core --> library
-  core --> metadata
-  core --> player
   ui_bridge --> chinese
   ui_bridge --> core
   ui_bridge --> library
@@ -126,8 +123,8 @@ flowchart BT
 | `storage` | SQLite、搜索索引、排序标签列 | `metadata`、`chinese` |
 | `library` | 递归扫描、`refresh_path`、`notify` 监听、内存聚合歌手/专辑 | `metadata`、`storage`、`chinese` |
 | `player` | `playbin` 加载/播放/暂停/seek/音量、Bus 事件 | 无 |
-| `core` | `Settings` TOML；骨架 `AppCore`、`PlaybackQueue` | `library`、`metadata`、`player` |
-| `ui_bridge` | 进程入口、`AppBridge`、封面缩放缓存、把上述能力接到 QML | 以上全部 |
+| `core` | `Settings` TOML | 无 |
+| `ui_bridge` | 进程入口、`AppBridge`、`TrackListModel`、封面缩放缓存、把上述能力接到 QML | 以上全部 |
 
 **依赖方向上成立的约束：** `chinese` 在最底，QML 只依赖 `ui_bridge`，播放与存储互不引用。
 

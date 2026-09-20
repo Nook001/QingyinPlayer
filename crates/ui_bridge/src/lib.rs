@@ -2,7 +2,7 @@ mod collections;
 #[allow(dead_code)]
 mod pointer_guard;
 
-use collections::{CollectionModel, DetailTrackModel};
+use collections::{CollectionModel, DetailTrackModel, TrackListModel};
 use cstr::cstr;
 use image::{ImageFormat, ImageReader, Limits};
 use qingyin_chinese::compare_keys;
@@ -28,12 +28,6 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::warn;
 
-const TITLE_ROLE: i32 = 0x0100;
-const ARTIST_ROLE: i32 = TITLE_ROLE + 1;
-const ALBUM_ROLE: i32 = TITLE_ROLE + 2;
-const DURATION_ROLE: i32 = TITLE_ROLE + 3;
-const PATH_ROLE: i32 = TITLE_ROLE + 4;
-const COVER_ROLE: i32 = TITLE_ROLE + 5;
 const MAX_COVER_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COVER_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_COVER_SOURCE_EDGE: u32 = 8192;
@@ -66,10 +60,9 @@ struct PendingPlaybackUi {
 #[allow(missing_debug_implementations, clippy::struct_excessive_bools)]
 #[derive(QObject, Default)]
 pub struct AppBridge {
-    base: qt_base_class!(trait QAbstractListModel),
+    base: qt_base_class!(trait QObject),
     /// Visible rows bound by the library `TrackTable` (search results or full library).
-    tracks: Vec<TrackMetadata>,
-    cover_urls: Vec<String>,
+    library_model: qt_property!(RefCell<TrackListModel>; CONST),
     /// Full imported library, independent of the current search filter.
     library_tracks: Vec<TrackMetadata>,
     library_cover_urls: Vec<String>,
@@ -212,7 +205,8 @@ pub struct AppBridge {
     play_track: qt_method!(
         fn play_track(&mut self, row: i32) {
             pointer_trace("slot", &format!("play_track row={row}"));
-            self.play_from_list(self.tracks.clone(), self.cover_urls.clone(), row);
+            let (tracks, covers) = self.library_model.borrow().snapshot();
+            self.play_from_list(tracks, covers, row);
         }
     ),
     toggle_playback: qt_method!(
@@ -821,39 +815,28 @@ impl AppBridge {
             .as_ref()
             .and_then(|player| player.current_path())
             .map(Path::to_path_buf);
-        self.begin_reset_model();
-        self.tracks = tracks;
-        self.cover_urls = cover_urls;
+        let mut tracks = tracks;
+        let mut cover_urls = cover_urls;
         if apply_column_sort {
             sort_tracks(
-                &mut self.tracks,
-                &mut self.cover_urls,
+                &mut tracks,
+                &mut cover_urls,
                 &self.sort_column.to_string(),
                 self.sort_ascending,
             );
         }
-        self.end_reset_model();
+        self.library_model.borrow_mut().replace(tracks, cover_urls);
         if self.playback_tracks.is_empty() {
             self.current_index = current_path
                 .as_ref()
-                .and_then(|path| self.tracks.iter().position(|track| &track.path == path));
+                .and_then(|path| self.library_model.borrow().position_of_path(path));
         }
     }
 
     fn sort_visible_tracks(&mut self) {
-        if self.tracks.is_empty() {
-            return;
-        }
-        sort_tracks(
-            &mut self.tracks,
-            &mut self.cover_urls,
-            &self.sort_column.to_string(),
-            self.sort_ascending,
-        );
-        let last = i32::try_from(self.tracks.len().saturating_sub(1)).unwrap_or(i32::MAX);
-        let top_left = self.row_index(0);
-        let bottom_right = self.row_index(last);
-        self.data_changed(top_left, bottom_right);
+        self.library_model
+            .borrow_mut()
+            .sort_in_place(&self.sort_column.to_string(), self.sort_ascending);
     }
 
     fn library_cover_for_path(&self, path: &Path) -> String {
@@ -990,50 +973,9 @@ impl AppBridge {
     }
 }
 
-impl QAbstractListModel for AppBridge {
-    fn row_count(&self) -> i32 {
-        i32::try_from(self.tracks.len()).unwrap_or(i32::MAX)
-    }
-
-    fn data(&self, index: QModelIndex, role: i32) -> QVariant {
-        let Some(track) = usize::try_from(index.row())
-            .ok()
-            .and_then(|row| self.tracks.get(row))
-        else {
-            return QVariant::default();
-        };
-
-        match role {
-            TITLE_ROLE => QString::from(track.title.clone()).into(),
-            ARTIST_ROLE => QString::from(track.artists.join("、")).into(),
-            ALBUM_ROLE => QString::from(track.album.clone().unwrap_or_default()).into(),
-            DURATION_ROLE => QString::from(format_duration(track)).into(),
-            PATH_ROLE => QString::from(track.path.to_string_lossy().into_owned()).into(),
-            COVER_ROLE => QString::from(
-                self.cover_urls
-                    .get(usize::try_from(index.row()).unwrap_or(usize::MAX))
-                    .cloned()
-                    .unwrap_or_default(),
-            )
-            .into(),
-            _ => QVariant::default(),
-        }
-    }
-
-    fn role_names(&self) -> HashMap<i32, QByteArray> {
-        HashMap::from([
-            (TITLE_ROLE, "title".into()),
-            (ARTIST_ROLE, "artist".into()),
-            (ALBUM_ROLE, "album".into()),
-            (DURATION_ROLE, "duration".into()),
-            (PATH_ROLE, "path".into()),
-            (COVER_ROLE, "cover".into()),
-        ])
-    }
-}
-
 pub fn register_qml_types() {
     qml_register_type::<AppBridge>(cstr!("Qingyin"), 1, 0, cstr!("AppBridge"));
+    qml_register_type::<TrackListModel>(cstr!("Qingyin"), 1, 0, cstr!("TrackListModel"));
 }
 
 fn pointer_log_path() -> &'static PathBuf {
@@ -1235,7 +1177,7 @@ fn search_database(query: &str, roots: &[PathBuf]) -> Result<SearchResult, Strin
     Ok(SearchResult { tracks })
 }
 
-fn sort_tracks(
+pub(crate) fn sort_tracks(
     tracks: &mut Vec<TrackMetadata>,
     cover_urls: &mut Vec<String>,
     column: &str,

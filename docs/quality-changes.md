@@ -114,13 +114,13 @@
 
 ## F. 结构收敛（拆开才能继续做队列）
 
-- [ ] **Q-27** 小 · 删除未使用的 `AppCore`  
+- [x] **Q-27** 小 · 删除未使用的 `AppCore`  
   完成：无调用方的聚合结构消失。
 
-- [ ] **Q-28** 小 · `qingyin-core` 在不做队列前只依赖设置所需 crate  
+- [x] **Q-28** 小 · `qingyin-core` 在不做队列前只依赖设置所需 crate  
   完成：`Settings` 不再因 `AppCore` 间接依赖 `library` / `player`。`PlaybackQueue` 要么删到做 2B.6 再加，要么留在 core 且不拉播放器依赖。
 
-- [ ] **Q-29** 中 · 抽出独立的曲目列表模型，与 `AppBridge` 的会话对象分开  
+- [x] **Q-29** 中 · 抽出独立的曲目列表模型，与 `AppBridge` 的会话对象分开  
   完成：QML 的 `libraryModel` 不再必须等于整个应用对象；角色映射只写一份。
 
 - [ ] **Q-30** 中 · 抽出 `PlaybackController`（或同名 QObject）  

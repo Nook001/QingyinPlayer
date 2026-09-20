@@ -11,19 +11,22 @@ Item {
     required property var theme
     required property var trackModel
     property bool sortable: true
+    property string sortColumn
+    property bool sortAscending: true
     property string debugLabel: "tracks"
     readonly property alias count: trackRepeater.count
     readonly property int doubleClickMs: 400
 
     signal trackActivated(int row)
+    signal sortRequested(string column)
 
     function clampScroll() {
     }
 
     function heading(label, column) {
-        if (!root.sortable || root.trackModel.sort_column !== column)
+        if (!root.sortable || root.sortColumn !== column)
             return label
-        return label + (root.trackModel.sort_ascending ? " ↑" : " ↓")
+        return label + (root.sortAscending ? " ↑" : " ↓")
     }
 
     ColumnLayout {
@@ -54,7 +57,7 @@ Item {
                 enabled: root.sortable
                 Accessible.name: "按歌曲名排序"
                 onClicked: if (root.sortable)
-                    root.trackModel.set_sort("title")
+                    root.sortRequested("title")
 
                 contentItem: Text {
                     text: root.heading("歌曲名", "title")
@@ -81,7 +84,7 @@ Item {
                 enabled: root.sortable
                 Accessible.name: "按专辑排序"
                 onClicked: if (root.sortable)
-                    root.trackModel.set_sort("album")
+                    root.sortRequested("album")
 
                 contentItem: Text {
                     text: root.heading("专辑", "album")
@@ -108,7 +111,7 @@ Item {
                 enabled: root.sortable
                 Accessible.name: "按时长排序"
                 onClicked: if (root.sortable)
-                    root.trackModel.set_sort("duration")
+                    root.sortRequested("duration")
 
                 contentItem: Text {
                     text: root.heading("时长", "duration")

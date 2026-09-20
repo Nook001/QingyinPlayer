@@ -9,12 +9,12 @@ Item {
     id: root
 
     required property var theme
-    required property var libraryModel
+    required property var session
 
     readonly property bool filtering: searchField.text.trim() !== ""
     readonly property bool waitingForSearch: filtering
-        && (root.libraryModel.searching
-            || searchField.text.trim() !== String(root.libraryModel.search_query).trim())
+        && (root.session.searching
+            || searchField.text.trim() !== String(root.session.search_query).trim())
 
     onVisibleChanged: {
         if (visible)
@@ -27,14 +27,14 @@ Item {
         repeat: false
         onTriggered: {
             if (searchField.text.trim() !== "")
-                root.libraryModel.search_tracks(searchField.text)
+                root.session.search_tracks(searchField.text)
         }
     }
 
     FolderDialog {
         id: folderDialog
         title: "选择音乐文件夹"
-        onAccepted: root.libraryModel.add_library_folder(selectedFolder)
+        onAccepted: root.session.add_library_folder(selectedFolder)
     }
 
     ColumnLayout {
@@ -105,7 +105,7 @@ Item {
             onTextChanged: {
                 if (text.trim() === "") {
                     searchDelay.stop()
-                    root.libraryModel.clear_search()
+                    root.session.clear_search()
                 } else {
                     searchDelay.restart()
                 }
@@ -123,7 +123,7 @@ Item {
         Text {
             Layout.fillWidth: true
             visible: root.filtering
-            text: root.libraryModel.search_status
+            text: root.session.search_status
             color: root.theme.mutedTextColor
             font.pixelSize: 12
         }
@@ -139,9 +139,12 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             theme: root.theme
-            trackModel: root.libraryModel
+            trackModel: root.session.library_model
+            sortColumn: String(root.session.sort_column)
+            sortAscending: root.session.sort_ascending
             visible: count > 0 && !root.waitingForSearch
-            onTrackActivated: function(row) { root.libraryModel.play_track(row) }
+            onTrackActivated: function(row) { root.session.play_track(row) }
+            onSortRequested: function(column) { root.session.set_sort(column) }
         }
 
         Item {
@@ -176,7 +179,7 @@ Item {
                             return "正在搜索…"
                         if (root.filtering)
                             return "没有找到匹配的歌曲"
-                        return root.libraryModel.scanning ? "正在扫描音乐" : "曲库还是空的"
+                        return root.session.scanning ? "正在扫描音乐" : "曲库还是空的"
                     }
                     color: root.theme.textColor
                     font.pixelSize: 18
@@ -186,7 +189,7 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: !root.filtering
-                    text: root.libraryModel.scan_status || "添加一个本地文件夹开始整理音乐"
+                    text: root.session.scan_status || "添加一个本地文件夹开始整理音乐"
                     color: root.theme.mutedTextColor
                     font.pixelSize: 13
                 }
