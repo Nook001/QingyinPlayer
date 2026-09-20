@@ -18,4 +18,4 @@ fi
 
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
 export QT_QUICK_CONTROLS_STYLE="${QT_QUICK_CONTROLS_STYLE:-Basic}"
-"$runner" -input "$root/qml/tst_interactions.qml" -import "$root/qml"
+"$runner" -input "$root/qml" -import "$root/qml"

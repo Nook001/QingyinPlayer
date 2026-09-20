@@ -28,6 +28,8 @@ ApplicationWindow {
     property real libraryContentY: 0
     property real artistGridY: 0
     property real albumGridY: 0
+    property real directoryGridY: 0
+    property int libraryBrowseMode: 0
 
     Theme {
         id: appTheme
@@ -112,9 +114,7 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        { label: "曲库", icon: "library" },
-                        { label: "歌手", icon: "artist" },
-                        { label: "专辑", icon: "album" }
+                        { label: "曲库", icon: "library" }
                     ]
 
                     delegate: Button {
@@ -192,11 +192,11 @@ ApplicationWindow {
                     flat: true
                     hoverEnabled: true
                     Accessible.name: "设置"
-                    onClicked: Qt.callLater(() => { window.currentView = 3 })
+                    onClicked: Qt.callLater(() => { window.currentView = 1 })
 
                     background: RoundedRect {
                         radius: 6
-                        color: window.navButtonBackground(settingsButton, window.currentView === 3)
+                        color: window.navButtonBackground(settingsButton, window.currentView === 1)
                     }
 
                     contentItem: RowLayout {
@@ -210,7 +210,7 @@ ApplicationWindow {
                                 anchors.centerIn: parent
                                 name: "settings"
                                 size: 18
-                                color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
+                                color: window.currentView === 1 ? "#FFFFFF" : appTheme.sidebarTextColor
                             }
                         }
 
@@ -218,9 +218,9 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: !window.sidebarCollapsed
                             text: "设置"
-                            color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
+                            color: window.currentView === 1 ? "#FFFFFF" : appTheme.sidebarTextColor
                             font.pixelSize: 14
-                            font.weight: window.currentView === 3 ? Font.DemiBold : Font.Normal
+                            font.weight: window.currentView === 1 ? Font.DemiBold : Font.Normal
                             verticalAlignment: Text.AlignVCenter
                         }
                     }
@@ -231,7 +231,7 @@ ApplicationWindow {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         color: appTheme.accentColor
-                        visible: window.currentView === 3
+                        visible: window.currentView === 1
                         radius: 2
                         antialiasing: true
                     }
@@ -251,7 +251,7 @@ ApplicationWindow {
                 Loader {
                     id: pageLoader
                     anchors.fill: parent
-                    sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
+                    sourceComponent: window.currentView === 0 ? libraryPage : settingsPage
                 }
 
                 PlayerBar {
@@ -283,28 +283,16 @@ ApplicationWindow {
             session: backend.library
             pendingQuery: window.libraryQuery
             savedContentY: window.libraryContentY
+            browseMode: window.libraryBrowseMode
+            artistGridY: window.artistGridY
+            albumGridY: window.albumGridY
+            directoryGridY: window.directoryGridY
+            onBrowseModeChanged: window.libraryBrowseMode = browseMode
+            onArtistGridYChanged: window.artistGridY = artistGridY
+            onAlbumGridYChanged: window.albumGridY = albumGridY
+            onDirectoryGridYChanged: window.directoryGridY = directoryGridY
             onPendingQueryChanged: window.libraryQuery = pendingQuery
             onSavedContentYChanged: window.libraryContentY = savedContentY
-        }
-    }
-
-    Component {
-        id: artistPage
-        Artist {
-            theme: appTheme
-            libraryModel: backend.library
-            savedGridY: window.artistGridY
-            onSavedGridYChanged: window.artistGridY = savedGridY
-        }
-    }
-
-    Component {
-        id: albumPage
-        Album {
-            theme: appTheme
-            libraryModel: backend.library
-            savedGridY: window.albumGridY
-            onSavedGridYChanged: window.albumGridY = savedGridY
         }
     }
 

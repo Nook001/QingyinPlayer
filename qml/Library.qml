@@ -12,6 +12,10 @@ Item {
     required property var session
     property string pendingQuery: ""
     property real savedContentY: 0
+    property int browseMode: 0
+    property real artistGridY: 0
+    property real albumGridY: 0
+    property real directoryGridY: 0
     property bool holdCompletedStatus: false
     property string completedStatusText: ""
     property bool statusReady: false
@@ -22,7 +26,7 @@ Item {
             || searchField.text.trim() !== String(root.session.search_query).trim())
     readonly property bool sessionBusy: root.session.busy
     readonly property string headerStatusText: {
-        if (root.filtering)
+        if (root.browseMode === 0 && root.filtering)
             return String(root.session.search_status)
         if (root.sessionBusy)
             return root.bannerFromSession()
@@ -52,13 +56,10 @@ Item {
         root.statusReady = true
         if (root.pendingQuery !== "")
             searchField.text = root.pendingQuery
-        if (trackTable.count > 0)
-            trackTable.restoreContentY(root.savedContentY)
     }
 
     Component.onDestruction: {
         root.pendingQuery = searchField.text
-        root.savedContentY = trackTable.contentY
         if (searchField.text.trim() !== String(root.session.search_query).trim())
             root.commitPendingQuery()
     }
@@ -135,8 +136,35 @@ Item {
                 visible: root.headerStatusText === ""
             }
 
+            AccentButton {
+                theme: root.theme
+                text: "选择目录"
+                iconName: "folderPlus"
+                preferredWidth: 108
+                preferredHeight: 32
+                cornerRadius: 16
+                enabled: !root.session.busy
+                onClicked: folderDialog.open()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            LibraryViewSwitch {
+                objectName: "libraryViewSwitch"
+                theme: root.theme
+                currentIndex: root.browseMode
+                onCurrentIndexChanged: root.browseMode = currentIndex
+            }
+
+            Item { Layout.fillWidth: true }
+
             TextField {
                 id: searchField
+                objectName: "librarySearchField"
+                visible: root.browseMode === 0
 
                 Layout.preferredWidth: 220
                 Layout.maximumWidth: 260
@@ -205,17 +233,6 @@ Item {
                     }
                 }
             }
-
-            AccentButton {
-                theme: root.theme
-                text: "添加目录"
-                iconName: "folderPlus"
-                preferredWidth: 108
-                preferredHeight: 32
-                cornerRadius: 16
-                enabled: !root.session.busy
-                onClicked: folderDialog.open()
-            }
         }
 
         Rectangle {
@@ -224,67 +241,130 @@ Item {
             color: root.theme.dividerColor
         }
 
-        TrackTable {
-            id: trackTable
+        Loader {
+            id: viewLoader
+            objectName: "libraryBodyLoader"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            theme: root.theme
-            trackModel: root.session.library_model
-            sortColumn: String(root.session.sort_column_name)
-            sortAscending: root.session.sort_ascending
-            visible: count > 0 && !root.waitingForSearch
-            onTrackActivated: (trackId) => root.session.play_track(trackId)
-            onSortRequested: (column) => root.session.set_sort(column)
-            onContentYChanged: root.savedContentY = contentY
+            sourceComponent: [allMusicView, artistView, albumView, directoryView][root.browseMode]
         }
+    }
 
+    Component {
+        id: allMusicView
         Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: !trackTable.visible
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 13
-
-                RoundedRect {
-                    width: 76
-                    height: 76
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    visible: !root.filtering
-                    radius: 38
-                    color: root.theme.subtleColor
-
-                    Icon {
-                        anchors.centerIn: parent
-                        name: "library"
-                        size: 30
-                        color: root.theme.accentColor
-                    }
+            TrackTable {
+                id: trackTable
+                objectName: "allMusicTable"
+                property bool scrollReady: false
+                Component.onCompleted: {
+                    restoreContentY(root.savedContentY)
+                    scrollReady = true
                 }
+                anchors.fill: parent
+                theme: root.theme
+                trackModel: root.session.library_model
+                sortColumn: String(root.session.sort_column_name)
+                sortAscending: root.session.sort_ascending
+                visible: count > 0 && !root.waitingForSearch
+                onTrackActivated: (trackId) => root.session.play_track(trackId)
+                onSortRequested: (column) => root.session.set_sort(column)
+                onContentYChanged: if (scrollReady) root.savedContentY = contentY
+            }
 
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: {
-                        if (root.waitingForSearch)
-                            return "正在搜索…"
-                        if (root.filtering)
-                            return "没有找到匹配的歌曲"
-                        return root.session.scanning ? "正在扫描音乐" : "曲库还是空的"
+            Item {
+                anchors.fill: parent
+                visible: !trackTable.visible
+
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 13
+
+                    RoundedRect {
+                        width: 76
+                        height: 76
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !root.filtering
+                        radius: 38
+                        color: root.theme.subtleColor
+
+                        Icon {
+                            anchors.centerIn: parent
+                            name: "library"
+                            size: 30
+                            color: root.theme.accentColor
+                        }
                     }
-                    color: root.theme.textColor
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                }
 
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    visible: !root.filtering
-                    text: root.session.scan_status || "添加一个本地目录开始整理音乐"
-                    color: root.theme.mutedTextColor
-                    font.pixelSize: 13
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: {
+                            if (root.waitingForSearch)
+                                return "正在搜索…"
+                            if (root.filtering)
+                                return "没有找到匹配的歌曲"
+                            return root.session.scanning ? "正在扫描音乐" : "曲库还是空的"
+                        }
+                        color: root.theme.textColor
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !root.filtering
+                        text: root.session.scan_status || "添加一个本地目录开始整理音乐"
+                        color: root.theme.mutedTextColor
+                        font.pixelSize: 13
+                    }
                 }
             }
+        }
+    }
+
+    Component {
+        id: artistView
+        Artist {
+            objectName: "artistBrowser"
+            theme: root.theme
+            libraryModel: root.session
+            embedded: true
+            savedGridY: root.artistGridY
+            onSavedGridYChanged: root.artistGridY = savedGridY
+        }
+    }
+
+    Component {
+        id: albumView
+        Album {
+            objectName: "albumBrowser"
+            theme: root.theme
+            libraryModel: root.session
+            embedded: true
+            savedGridY: root.albumGridY
+            onSavedGridYChanged: root.albumGridY = savedGridY
+        }
+    }
+
+    Component {
+        id: directoryView
+        CollectionBrowser {
+            objectName: "directoryBrowser"
+            theme: root.theme
+            embedded: true
+            title: "目录"
+            emptyTitle: "还没有音乐目录"
+            emptySubtitle: "添加音乐后，目录将显示在这里"
+            collectionModel: root.session.directory_model
+            detailModel: root.session.directory_detail
+            selectedName: root.session.selected_directory
+            selectedSubtitle: root.session.selected_directory_subtitle
+            selectedCover: root.session.selected_directory_cover
+            savedGridY: root.directoryGridY
+            onSavedGridYChanged: root.directoryGridY = savedGridY
+            onCollectionOpened: (id) => root.session.open_directory(id)
+            onCollectionClosed: root.session.close_directory()
+            onTrackActivated: (id) => root.session.play_directory_track(id)
         }
     }
 }

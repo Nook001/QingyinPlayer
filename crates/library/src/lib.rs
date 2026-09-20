@@ -215,6 +215,49 @@ pub fn aggregate_albums(tracks: &[TrackSnapshot]) -> Vec<CollectionEntry> {
     finish_collections(groups, CollectionKind::Album)
 }
 
+/// Groups tracks by their immediate containing directory, preserving filesystem identity.
+#[must_use]
+pub fn aggregate_directories(tracks: &[TrackSnapshot]) -> Vec<CollectionEntry> {
+    let mut groups = HashMap::<PathBuf, Vec<TrackSnapshot>>::new();
+    for track in tracks {
+        let Some(directory) = track.metadata.path.parent() else {
+            continue;
+        };
+        groups
+            .entry(directory.to_path_buf())
+            .or_default()
+            .push(track.clone());
+    }
+    let mut entries = groups
+        .into_iter()
+        .map(|(directory, mut tracks)| {
+            tracks.sort_by(|left, right| {
+                compare_keys(&left.keys.title, &right.keys.title)
+                    .then_with(|| left.metadata.path.cmp(&right.metadata.path))
+            });
+            let path = directory.to_string_lossy();
+            let name = directory.file_name().map_or_else(
+                || path.to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            CollectionEntry {
+                id: format!("directory:{path}"),
+                name,
+                subtitle: format!("{} 首歌曲 · {path}", tracks.len()),
+                cover_url: tracks
+                    .iter()
+                    .find(|track| !track.cover_url.is_empty())
+                    .map(|track| track.cover_url.clone())
+                    .unwrap_or_default(),
+                track_count: tracks.len(),
+                tracks,
+            }
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by_cached_key(|entry| (sort_key(&entry.name, None), entry.id.clone()));
+    entries
+}
+
 impl MusicLibrary {
     #[must_use]
     pub fn tracks(&self) -> &[TrackMetadata] {
@@ -961,6 +1004,36 @@ impl AlbumKey {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn directory_groups_keep_exact_parents_and_shared_tracks() {
+        let tracks = snapshots_with_covers(
+            vec![
+                test_track("B", None, vec![], "/music/Live/b.flac"),
+                test_track("A", None, vec![], "/music/Live/a.flac"),
+                test_track("C", None, vec![], "/other/Live/c.flac"),
+                test_track("D", None, vec![], "/music/live/d.flac"),
+                test_track("E", None, vec![], "/music/Live/Disc 2/e.flac"),
+            ],
+            &["cover-b", "", "", "", ""],
+        );
+        let directories = aggregate_directories(&tracks);
+        assert_eq!(directories.len(), 4);
+        let live = directories
+            .iter()
+            .find(|entry| entry.id == "directory:/music/Live")
+            .unwrap();
+        assert_eq!(live.name, "Live");
+        assert_eq!(live.track_count, 2);
+        assert_eq!(live.subtitle, "2 首歌曲 · /music/Live");
+        assert_eq!(live.cover_url, "cover-b");
+        assert_eq!(live.tracks[0].metadata.title, "A");
+        assert!(Arc::ptr_eq(&live.tracks[0].metadata, &tracks[1].metadata));
+        let mut reversed = tracks.clone();
+        reversed.reverse();
+        assert_eq!(directories, aggregate_directories(&reversed));
+        assert!(aggregate_directories(&[]).is_empty());
+    }
 
     #[test]
     fn recognizes_supported_extensions_case_insensitively() {

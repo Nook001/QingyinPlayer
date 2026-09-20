@@ -7,6 +7,7 @@ qrc!(embedded_qml,
     "../../qml" as "qml" {
         "Main.qml",
         "Library.qml",
+        "LibraryViewSwitch.qml",
         "Artist.qml",
         "Album.qml",
         "Settings.qml",

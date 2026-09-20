@@ -18,6 +18,7 @@ Item {
     required property string selectedCover
 
     property real savedGridY: 0
+    property bool embedded: false
 
     signal collectionOpened(string collectionId)
     signal collectionClosed()
@@ -27,14 +28,15 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: 18
-        anchors.rightMargin: 18
-        anchors.topMargin: 28
+        anchors.leftMargin: root.embedded ? 0 : 18
+        anchors.rightMargin: root.embedded ? 0 : 18
+        anchors.topMargin: root.embedded ? 0 : 28
         anchors.bottomMargin: 0
         spacing: 18
 
         RowLayout {
             Layout.fillWidth: true
+            visible: !root.embedded || root.showingDetail
             spacing: 12
 
             FlatButton {
@@ -80,6 +82,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
+            visible: !root.embedded || root.showingDetail
             Layout.preferredHeight: 1
             color: root.theme.dividerColor
         }
@@ -100,6 +103,7 @@ Item {
 
             GridView {
                 id: collectionGrid
+                property bool scrollReady: false
                 anchors.fill: parent
                 clip: true
                 reuseItems: true
@@ -112,8 +116,11 @@ Item {
                     width: collectionGrid.width
                     height: 180
                 }
-                Component.onCompleted: contentY = Math.max(0, root.savedGridY)
-                onContentYChanged: root.savedGridY = contentY
+                Component.onCompleted: {
+                    contentY = Math.max(0, root.savedGridY)
+                    scrollReady = true
+                }
+                onContentYChanged: if (scrollReady) root.savedGridY = contentY
                 highlightMoveDuration: 0
 
                 delegate: ItemDelegate {

@@ -12,8 +12,9 @@ use qingyin_core::{SortColumn, XdgDirs};
 use qingyin_library::{
     CollectionEntry, CoverLookup, CoverPriority, CoverRequest, CoverScheduler, CoverService,
     CoverUpdate, LibraryError, LibraryWatcher, ScanEvent, ScanSummary, TrackSnapshot,
-    WatchSnapshot, WatchSummary, aggregate_albums, aggregate_artists, commit_parsed_cover,
-    normalize_roots, prune_unwatched_tracks, scan_directory_with, watch_directories,
+    WatchSnapshot, WatchSummary, aggregate_albums, aggregate_artists, aggregate_directories,
+    commit_parsed_cover, normalize_roots, prune_unwatched_tracks, scan_directory_with,
+    watch_directories,
 };
 use qingyin_metadata::TrackMetadata;
 use qingyin_storage::{Database, SearchHits, StorageError};
@@ -33,6 +34,7 @@ struct LibrarySnapshot {
     tracks: Vec<TrackSnapshot>,
     artists: Vec<CollectionEntry>,
     albums: Vec<CollectionEntry>,
+    directories: Vec<CollectionEntry>,
     status: String,
     roots_generation: u64,
 }
@@ -163,8 +165,10 @@ pub struct LibrarySession {
     host: Option<Arc<dyn Fn(HostEvent) + Send + Sync>>,
     artist_model: qt_property!(RefCell<CollectionModel>; CONST),
     album_model: qt_property!(RefCell<CollectionModel>; CONST),
+    directory_model: qt_property!(RefCell<CollectionModel>; CONST),
     artist_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
     album_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
+    directory_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
     selected_artist: qt_property!(QString; NOTIFY collections_changed),
     selected_artist_subtitle: qt_property!(QString; NOTIFY collections_changed),
     selected_artist_cover: qt_property!(QString; NOTIFY collections_changed),
@@ -173,6 +177,10 @@ pub struct LibrarySession {
     selected_album_subtitle: qt_property!(QString; NOTIFY collections_changed),
     selected_album_cover: qt_property!(QString; NOTIFY collections_changed),
     selected_album_id: String,
+    selected_directory: qt_property!(QString; NOTIFY collections_changed),
+    selected_directory_subtitle: qt_property!(QString; NOTIFY collections_changed),
+    selected_directory_cover: qt_property!(QString; NOTIFY collections_changed),
+    selected_directory_id: String,
     playing_track_id: i64,
     collections_changed: qt_signal!(),
     search_generation: u64,
@@ -262,6 +270,23 @@ pub struct LibrarySession {
     play_album_track: qt_method!(
         fn play_album_track(&mut self, track_id: i64) {
             let tracks = self.album_detail.borrow().snapshot();
+            self.play_listed_id(&tracks, track_id);
+        }
+    ),
+    open_directory: qt_method!(
+        #[allow(clippy::needless_pass_by_value)]
+        fn open_directory(&mut self, collection_id: QString) {
+            self.show_directory_by_id(&collection_id.to_string());
+        }
+    ),
+    close_directory: qt_method!(
+        fn close_directory(&mut self) {
+            self.close_directory_internal();
+        }
+    ),
+    play_directory_track: qt_method!(
+        fn play_directory_track(&mut self, track_id: i64) {
+            let tracks = self.directory_detail.borrow().snapshot();
             self.play_listed_id(&tracks, track_id);
         }
     ),
@@ -494,7 +519,7 @@ impl LibrarySession {
         } else {
             self.rerun_search();
         }
-        self.apply_collections(snapshot.artists, snapshot.albums);
+        self.apply_collections(snapshot.artists, snapshot.albums, snapshot.directories);
         self.scan_status = snapshot.status.into();
         self.scan_status_changed();
         self.queue_missing_covers();
@@ -547,6 +572,9 @@ impl LibrarySession {
             .set_cover(update.track_id, update.url.clone());
         self.album_detail
             .borrow_mut()
+            .set_cover(update.track_id, update.url.clone());
+        self.directory_detail
+            .borrow_mut()
             .set_cover(update.track_id, update.url);
     }
 
@@ -559,6 +587,7 @@ impl LibrarySession {
             tracks,
             artists,
             albums,
+            directories,
         } = snapshot;
         let remounted = summary.needs_reconcile
             && !summary.overflow
@@ -612,7 +641,7 @@ impl LibrarySession {
                     self.library_model.borrow_mut().upsert(track);
                 }
             }
-            self.apply_collections(artists, albums);
+            self.apply_collections(artists, albums, directories);
             self.library_revision = self.library_revision.wrapping_add(1);
             self.queue_missing_covers();
         } else {
@@ -620,6 +649,7 @@ impl LibrarySession {
                 tracks,
                 artists,
                 albums,
+                directories,
                 status: watch_status(&summary),
                 roots_generation: self.roots_generation,
             });
@@ -846,11 +876,18 @@ impl LibrarySession {
         self.library_model.borrow_mut().replace(tracks);
     }
 
-    fn apply_collections(&mut self, artists: Vec<CollectionEntry>, albums: Vec<CollectionEntry>) {
+    fn apply_collections(
+        &mut self,
+        artists: Vec<CollectionEntry>,
+        albums: Vec<CollectionEntry>,
+        directories: Vec<CollectionEntry>,
+    ) {
         let selected_artist = self.selected_artist_id.clone();
         let selected_album = self.selected_album_id.clone();
+        let selected_directory = self.selected_directory_id.clone();
         self.artist_model.borrow_mut().reset(artists);
         self.album_model.borrow_mut().reset(albums);
+        self.directory_model.borrow_mut().reset(directories);
         if selected_artist.is_empty() {
             self.close_artist_internal();
         } else {
@@ -861,6 +898,7 @@ impl LibrarySession {
         } else {
             self.show_album_by_id(&selected_album);
         }
+        self.show_directory_by_id(&selected_directory);
         self.collections_changed();
     }
 
@@ -935,6 +973,34 @@ impl LibrarySession {
         self.selected_album_subtitle = entry.subtitle.into();
         self.selected_album_cover = entry.cover_url.into();
         self.album_detail.borrow_mut().reset(entry.tracks);
+        self.collections_changed();
+    }
+    fn close_directory_internal(&mut self) {
+        if self.selected_directory_id.is_empty() {
+            return;
+        }
+        self.selected_directory = QString::default();
+        self.selected_directory_subtitle = QString::default();
+        self.selected_directory_cover = QString::default();
+        self.selected_directory_id.clear();
+        self.directory_detail.borrow_mut().reset(Vec::new());
+        self.collections_changed();
+    }
+
+    fn show_directory_by_id(&mut self, id: &str) {
+        let entry = self.directory_model.borrow().entry_by_id(id);
+        match entry {
+            Some(entry) => self.show_directory_entry(entry),
+            None => self.close_directory_internal(),
+        }
+    }
+
+    fn show_directory_entry(&mut self, entry: CollectionEntry) {
+        self.selected_directory_id = entry.id.clone();
+        self.selected_directory = entry.name.into();
+        self.selected_directory_subtitle = entry.subtitle.into();
+        self.selected_directory_cover = entry.cover_url.into();
+        self.directory_detail.borrow_mut().reset(entry.tracks);
         self.collections_changed();
     }
 }
@@ -1064,6 +1130,7 @@ fn scan_library(
         }
         snapshot.artists = aggregate_artists(&snapshot.tracks);
         snapshot.albums = aggregate_albums(&snapshot.tracks);
+        snapshot.directories = aggregate_directories(&snapshot.tracks);
     }
     Ok(snapshot)
 }
@@ -1089,10 +1156,12 @@ fn load_snapshot(
     };
     let artists = aggregate_artists(&tracks);
     let albums = aggregate_albums(&tracks);
+    let directories = aggregate_directories(&tracks);
     Ok(LibrarySnapshot {
         tracks,
         artists,
         albums,
+        directories,
         status,
         roots_generation,
     })
@@ -1137,6 +1206,46 @@ fn database_path() -> Result<PathBuf, LibraryIoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_detail_plays_its_queue_and_closes_when_removed() {
+        let tracks = [(1, "/music/one/a.flac"), (2, "/music/two/b.flac")]
+            .into_iter()
+            .map(|(id, path)| {
+                let mut metadata = TrackMetadata::from_display(
+                    PathBuf::from(path),
+                    "Song",
+                    None,
+                    Vec::new(),
+                    Some(Duration::from_secs(10)),
+                );
+                metadata.id = id;
+                TrackSnapshot::from_metadata(metadata)
+            })
+            .collect::<Vec<_>>();
+        let mut session = LibrarySession::default();
+        let (tx, rx) = mpsc::channel();
+        session.set_host(move |event| {
+            tx.send(event).unwrap();
+        });
+        session.apply_collections(Vec::new(), Vec::new(), aggregate_directories(&tracks));
+        session.open_directory("directory:/music/one".into());
+        assert_eq!(session.selected_directory.to_string(), "one");
+        session.play_directory_track(1);
+        let HostEvent::Play {
+            tracks: queue,
+            track_id,
+        } = rx.recv().unwrap()
+        else {
+            panic!("expected directory playback");
+        };
+        assert_eq!(track_id, 1);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].id(), 1);
+        session.apply_collections(Vec::new(), Vec::new(), aggregate_directories(&tracks[1..]));
+        assert!(session.selected_directory.is_empty());
+        assert!(session.directory_detail.borrow().snapshot().is_empty());
+    }
 
     #[test]
     fn scan_and_search_errors_are_matchable_with_chinese_messages() {

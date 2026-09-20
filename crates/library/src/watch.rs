@@ -12,7 +12,8 @@ use tracing::warn;
 use crate::covers::CoverService;
 use crate::{
     CollectionEntry, LibraryChange, LibraryError, TrackSnapshot, aggregate_albums,
-    aggregate_artists, commit_parsed_cover, normalize_roots, refresh_watched_path_with,
+    aggregate_artists, aggregate_directories, commit_parsed_cover, normalize_roots,
+    refresh_watched_path_with,
 };
 use qingyin_storage::Database;
 
@@ -30,6 +31,7 @@ pub struct WatchSnapshot {
     pub tracks: Vec<TrackSnapshot>,
     pub artists: Vec<CollectionEntry>,
     pub albums: Vec<CollectionEntry>,
+    pub directories: Vec<CollectionEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -370,11 +372,13 @@ fn build_watch_snapshot(database_path: &Path, summary: WatchSummary) -> WatchSna
     }
     let artists = aggregate_artists(&tracks);
     let albums = aggregate_albums(&tracks);
+    let directories = aggregate_directories(&tracks);
     WatchSnapshot {
         summary,
         tracks,
         artists,
         albums,
+        directories,
     }
 }
 
