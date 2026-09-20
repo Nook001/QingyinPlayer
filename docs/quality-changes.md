@@ -123,7 +123,7 @@
 - [x] **Q-29** 中 · 抽出独立的曲目列表模型，与 `AppBridge` 的会话对象分开  
   完成：QML 的 `libraryModel` 不再必须等于整个应用对象；角色映射只写一份。
 
-- [ ] **Q-30** 中 · 抽出 `PlaybackController`（或同名 QObject）  
+- [x] **Q-30** 中 · 抽出 `PlaybackController`（或同名 QObject）  
   完成：load/play/EOS/进度/音量不写在列表模型里；`PlayerBar` 绑控制器。
 
 - [ ] **Q-31** 中 · 扫描 + 监听回调收到独立的 library session 类型  

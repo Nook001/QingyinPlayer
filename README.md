@@ -76,7 +76,7 @@ qingyin/
                      ▼
 ┌──────────────────────────────────────────┐
 │         ui_bridge · AppBridge            │
-│  TrackListModel · 歌手/专辑模型 · 播放会话 │
+│  TrackListModel · 歌手/专辑 · PlaybackController │
 └──────┬──────────┬──────────┬─────────────┘
        │          │          │
        ▼          ▼          ▼
@@ -86,7 +86,7 @@ qingyin/
    chinese
 ```
 
-运行时真正的编排者是 `AppBridge`。曲库表绑定独立的 `TrackListModel`，不把整个会话对象当成列表模型。
+运行时真正的编排者是 `AppBridge`。曲库表绑定独立的 `TrackListModel`，播放栏绑定 `PlaybackController`，不把整个会话对象当成列表模型或播放器。
 
 ## 模块依赖
 
@@ -124,7 +124,7 @@ flowchart BT
 | `library` | 递归扫描、`refresh_path`、`notify` 监听、内存聚合歌手/专辑 | `metadata`、`storage`、`chinese` |
 | `player` | `playbin` 加载/播放/暂停/seek/音量、Bus 事件 | 无 |
 | `core` | `Settings` TOML | 无 |
-| `ui_bridge` | 进程入口、`AppBridge`、`TrackListModel`、封面缩放缓存、把上述能力接到 QML | 以上全部 |
+| `ui_bridge` | 进程入口、`AppBridge`、`TrackListModel`、`PlaybackController`、封面缩放缓存、把上述能力接到 QML | 以上全部 |
 
 **依赖方向上成立的约束：** `chinese` 在最底，QML 只依赖 `ui_bridge`，播放与存储互不引用。
 
@@ -178,7 +178,7 @@ inotify 事件
 
 ```
 列表双击某一行
-  → AppBridge 复制当前列表为 playback_tracks（与曲库筛选/排序解耦）
+  → PlaybackController 复制当前列表为 playback_tracks（与曲库筛选/排序解耦）
   → 主线程 Player::load + play（playbin，URI 为本地文件，不等待 preroll）
   → Playing 时由播放器推送 position
   → GLib Bus watch：EOS 自动下一首，Error 回传界面
@@ -196,7 +196,7 @@ inotify 事件
 - Bus watch 挂在独立 `GLib` 主循环上；`load` / `play` / `pause` / `seek` 也排队到这条线程，避免和 Qt 主线程同时碰 `playbin`。仅在 `Playing` 时推送进度。
 - 析构时将 pipeline 置 `Null`，并停止 Bus 线程。
 
-播放会话状态（当前行、标题、封面 URL、错误文案）由 `AppBridge` 持有，不在 `Player` 内。
+播放会话状态（当前行、标题、封面 URL、错误文案）由 `PlaybackController` 持有，不在 `Player` 内，也不再堆在会话对象上。
 
 ### 文件扫描（`crates/library`）
 

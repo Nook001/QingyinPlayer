@@ -1,10 +1,12 @@
 mod collections;
+mod playback;
 #[allow(dead_code)]
 mod pointer_guard;
 
 use collections::{CollectionModel, DetailTrackModel, TrackListModel};
 use cstr::cstr;
 use image::{ImageFormat, ImageReader, Limits};
+use playback::PlaybackController;
 use qingyin_chinese::compare_keys;
 use qingyin_core::Settings;
 use qingyin_library::{
@@ -12,7 +14,6 @@ use qingyin_library::{
     aggregate_artists, is_library_track, prune_unwatched_tracks, watch_directories,
 };
 use qingyin_metadata::{CoverArt, TrackMetadata, read_cover};
-use qingyin_player::{PlaybackState, Player, PlayerEvent};
 use qingyin_storage::Database;
 use qmetaobject::QUrl;
 use qmetaobject::prelude::*;
@@ -48,15 +49,6 @@ struct SearchResult {
     tracks: Vec<TrackMetadata>,
 }
 
-#[derive(Debug)]
-struct PendingPlaybackUi {
-    generation: u64,
-    title: String,
-    artist: String,
-    cover: String,
-    duration: i64,
-}
-
 #[allow(missing_debug_implementations, clippy::struct_excessive_bools)]
 #[derive(QObject, Default)]
 pub struct AppBridge {
@@ -66,9 +58,7 @@ pub struct AppBridge {
     /// Full imported library, independent of the current search filter.
     library_tracks: Vec<TrackMetadata>,
     library_cover_urls: Vec<String>,
-    /// Playback session order; not replaced when the visible list is filtered or sorted.
-    playback_tracks: Vec<TrackMetadata>,
-    playback_cover_urls: Vec<String>,
+    playback: qt_property!(RefCell<PlaybackController>; CONST),
     artist_model: qt_property!(RefCell<CollectionModel>; CONST),
     album_model: qt_property!(RefCell<CollectionModel>; CONST),
     artist_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
@@ -99,22 +89,6 @@ pub struct AppBridge {
     scanning_changed: qt_signal!(),
     scan_status: qt_property!(QString; NOTIFY scan_status_changed),
     scan_status_changed: qt_signal!(),
-    player: Option<Player>,
-    current_index: Option<usize>,
-    /// True while a `playbin` load/play is in flight; extra next/prev wait.
-    play_in_flight: bool,
-    queued_play_row: Option<i32>,
-    playback_ui_generation: u64,
-    playback_state: qt_property!(QString; NOTIFY playback_changed),
-    current_title: qt_property!(QString; NOTIFY playback_changed),
-    current_artist: qt_property!(QString; NOTIFY playback_changed),
-    current_cover: qt_property!(QString; NOTIFY playback_changed),
-    playback_error: qt_property!(QString; NOTIFY playback_changed),
-    playback_changed: qt_signal!(),
-    playback_position: qt_property!(i64; NOTIFY playback_progress_changed),
-    playback_duration: qt_property!(i64; NOTIFY playback_progress_changed),
-    player_volume: qt_property!(f64; NOTIFY playback_progress_changed),
-    playback_progress_changed: qt_signal!(),
     application_name: qt_method!(
         fn application_name(&self) -> QString {
             let _ = self;
@@ -206,39 +180,9 @@ pub struct AppBridge {
         fn play_track(&mut self, row: i32) {
             pointer_trace("slot", &format!("play_track row={row}"));
             let (tracks, covers) = self.library_model.borrow().snapshot();
-            self.play_from_list(tracks, covers, row);
-        }
-    ),
-    toggle_playback: qt_method!(
-        fn toggle_playback(&mut self) {
-            pointer_trace("slot", "toggle_playback");
-            self.toggle_playback_internal();
-        }
-    ),
-    play_previous: qt_method!(
-        fn play_previous(&mut self) {
-            pointer_trace("slot", "play_previous");
-            let Some(current) = self.current_index else {
-                pointer_trace("slot", "play_previous skipped: no current track");
-                return;
-            };
-            self.play_queue_row(i32::try_from(previous_track_index(current)).unwrap_or(0));
-        }
-    ),
-    play_next: qt_method!(
-        fn play_next(&mut self) {
-            pointer_trace("slot", "play_next");
-            self.play_next_internal();
-        }
-    ),
-    seek_to: qt_method!(
-        fn seek_to(&mut self, position: i64) {
-            self.seek_to_internal(position);
-        }
-    ),
-    set_player_volume: qt_method!(
-        fn set_player_volume(&mut self, volume: f64) {
-            self.set_player_volume_internal(volume);
+            self.playback
+                .borrow_mut()
+                .play_from_list(tracks, covers, row);
         }
     ),
     search_tracks: qt_method!(
@@ -282,7 +226,9 @@ pub struct AppBridge {
         fn play_artist_track(&mut self, row: i32) {
             pointer_trace("slot", &format!("play_artist_track row={row}"));
             let (tracks, covers) = self.artist_detail.borrow().snapshot();
-            self.play_from_list(tracks, covers, row);
+            self.playback
+                .borrow_mut()
+                .play_from_list(tracks, covers, row);
         }
     ),
     open_album: qt_method!(
@@ -299,7 +245,9 @@ pub struct AppBridge {
         fn play_album_track(&mut self, row: i32) {
             pointer_trace("slot", &format!("play_album_track row={row}"));
             let (tracks, covers) = self.album_detail.borrow().snapshot();
-            self.play_from_list(tracks, covers, row);
+            self.playback
+                .borrow_mut()
+                .play_from_list(tracks, covers, row);
         }
     ),
     shutdown: qt_method!(
@@ -312,192 +260,7 @@ pub struct AppBridge {
 impl AppBridge {
     fn shutdown_internal(&mut self) {
         self.watcher = None;
-        self.player = None;
-    }
-
-    fn ensure_player(&mut self) -> Result<(), String> {
-        if self.player.is_some() {
-            return Ok(());
-        }
-
-        let mut player = Player::initialize().map_err(|error| error.to_string())?;
-        let bridge = QPointer::from(&*self);
-        let dispatch = qmetaobject::queued_callback(move |event: PlayerEvent| {
-            let Some(bridge) = bridge.as_pinned() else {
-                return;
-            };
-            bridge.borrow_mut().handle_player_event(event);
-        });
-        player
-            .set_event_handler(dispatch)
-            .map_err(|error| error.to_string())?;
-        player.set_volume(self.player_volume);
-        self.player_volume = player.volume();
-        self.player = Some(player);
-        self.playback_progress_changed();
-        Ok(())
-    }
-
-    fn play_from_list(&mut self, tracks: Vec<TrackMetadata>, cover_urls: Vec<String>, row: i32) {
-        self.playback_tracks = tracks;
-        self.playback_cover_urls = cover_urls;
-        self.play_queue_row(row);
-    }
-
-    fn play_queue_row(&mut self, row: i32) {
-        if self.play_in_flight {
-            self.queued_play_row = Some(row);
-            return;
-        }
-        self.start_queue_row(row);
-    }
-
-    fn start_queue_row(&mut self, row: i32) {
-        let Some((row, track)) = usize::try_from(row).ok().and_then(|row| {
-            self.playback_tracks
-                .get(row)
-                .cloned()
-                .map(|track| (row, track))
-        }) else {
-            return;
-        };
-        if let Err(error) = self.ensure_player() {
-            self.set_playback_error(error);
-            return;
-        }
-        let Some(player) = self.player.as_mut() else {
-            return;
-        };
-        self.play_in_flight = true;
-        if let Err(error) = player.load(&track.path).and_then(|()| player.play()) {
-            self.play_in_flight = false;
-            self.set_playback_error(error.to_string());
-            return;
-        }
-
-        self.current_index = Some(row);
-        self.playback_ui_generation = self.playback_ui_generation.wrapping_add(1);
-        let pending = PendingPlaybackUi {
-            generation: self.playback_ui_generation,
-            title: track.title.clone(),
-            artist: track.artists.join("、"),
-            cover: self
-                .playback_cover_urls
-                .get(row)
-                .cloned()
-                .unwrap_or_default(),
-            duration: duration_millis(track.duration),
-        };
-        let bridge = QPointer::from(&*self);
-        let publish = qmetaobject::queued_callback(move |pending: PendingPlaybackUi| {
-            let Some(bridge) = bridge.as_pinned() else {
-                return;
-            };
-            bridge.borrow_mut().publish_playback_ui(pending);
-        });
-        publish(pending);
-    }
-
-    fn publish_playback_ui(&mut self, pending: PendingPlaybackUi) {
-        if pending.generation != self.playback_ui_generation {
-            return;
-        }
-        self.current_title = pending.title.into();
-        self.current_artist = pending.artist.into();
-        self.current_cover = pending.cover.into();
-        self.playback_state = "playing".into();
-        self.playback_error = QString::default();
-        self.playback_position = 0;
-        self.playback_duration = pending.duration;
-        self.playback_changed();
-        self.playback_progress_changed();
-        self.play_in_flight = false;
-        if let Some(row) = self.queued_play_row.take() {
-            self.start_queue_row(row);
-        }
-    }
-
-    fn toggle_playback_internal(&mut self) {
-        let Some(player) = self.player.as_mut() else {
-            return;
-        };
-        let state = player.state();
-        if state == PlaybackState::Stopped {
-            if let Some(row) = self.current_index.and_then(|row| i32::try_from(row).ok()) {
-                self.play_queue_row(row);
-            }
-            return;
-        }
-
-        let result = match state {
-            PlaybackState::Playing => player.pause(),
-            PlaybackState::Paused => player.play(),
-            PlaybackState::Stopped => unreachable!(),
-        };
-        if let Err(error) = result {
-            self.set_playback_error(error.to_string());
-            return;
-        }
-        self.playback_state = match player.state() {
-            PlaybackState::Playing => "playing".into(),
-            PlaybackState::Paused => "paused".into(),
-            PlaybackState::Stopped => "stopped".into(),
-        };
-        self.playback_error = QString::default();
-        self.playback_changed();
-    }
-
-    fn play_next_internal(&mut self) {
-        let Some(next) = self
-            .current_index
-            .and_then(|current| next_track_index(current, self.playback_tracks.len()))
-        else {
-            if self.current_index.is_some() {
-                if let Some(player) = self.player.as_mut() {
-                    let _ = player.stop();
-                }
-                self.playback_state = "stopped".into();
-                self.playback_position = 0;
-                self.playback_changed();
-                self.playback_progress_changed();
-            }
-            return;
-        };
-        if let Ok(next) = i32::try_from(next) {
-            self.play_queue_row(next);
-        }
-    }
-
-    fn seek_to_internal(&mut self, position: i64) {
-        let Some(player) = self.player.as_mut() else {
-            return;
-        };
-        let maximum = self.playback_duration.max(0);
-        let position = position.clamp(0, maximum);
-        let Ok(position_millis) = u64::try_from(position) else {
-            return;
-        };
-        if let Err(error) = player.seek(Duration::from_millis(position_millis)) {
-            self.set_playback_error(error.to_string());
-            return;
-        }
-        self.playback_position = position;
-        self.playback_progress_changed();
-    }
-
-    fn set_player_volume_internal(&mut self, volume: f64) {
-        let volume = volume.clamp(0.0, 1.0);
-        if let Some(player) = self.player.as_mut() {
-            player.set_volume(volume);
-            self.player_volume = player.volume();
-        } else {
-            self.player_volume = volume;
-        }
-        if (self.settings.volume - self.player_volume).abs() > f64::EPSILON {
-            self.settings.volume = self.player_volume;
-            self.persist_settings();
-        }
-        self.playback_progress_changed();
+        self.playback.borrow_mut().shutdown();
     }
 
     fn search_tracks_internal(&mut self, query: &QString) {
@@ -588,6 +351,7 @@ impl AppBridge {
             return;
         }
         self.restored = true;
+        self.attach_playback_persist();
         self.settings = Settings::load_or_default();
         self.apply_settings_to_ui();
         self.scan_status = "正在恢复曲库…".into();
@@ -626,21 +390,38 @@ impl AppBridge {
 
     fn apply_settings_to_ui(&mut self) {
         self.dark_theme = self.settings.dark_theme;
-        self.player_volume = self.settings.volume;
+        self.playback
+            .borrow_mut()
+            .apply_saved_volume(self.settings.volume);
         self.sort_column = self.settings.sort_column.clone().into();
         self.sort_ascending = self.settings.sort_ascending;
         self.music_folders = format_music_folders(&self.settings.music_directories).into();
         self.settings_changed();
         self.sort_changed();
-        self.playback_progress_changed();
     }
 
     fn persist_settings(&mut self) {
+        self.settings.volume = self.playback.borrow().volume();
         self.music_folders = format_music_folders(&self.settings.music_directories).into();
         self.settings_changed();
         if let Err(error) = self.settings.save() {
             warn!(%error, "failed to save settings");
         }
+    }
+
+    fn attach_playback_persist(&mut self) {
+        let bridge = QPointer::from(&*self);
+        let persist = qmetaobject::queued_callback(move |volume: f64| {
+            let Some(bridge) = bridge.as_pinned() else {
+                return;
+            };
+            let mut bridge = bridge.borrow_mut();
+            if (bridge.settings.volume - volume).abs() > f64::EPSILON {
+                bridge.settings.volume = volume;
+                bridge.persist_settings();
+            }
+        });
+        self.playback.borrow_mut().set_volume_persist(persist);
     }
 
     fn ensure_watcher(&mut self) {
@@ -697,7 +478,7 @@ impl AppBridge {
                         let query = bridge.search_query.clone();
                         bridge.search_tracks_internal(&query);
                     }
-                    bridge.skip_missing_current_track();
+                    bridge.playback.borrow_mut().skip_missing_current_track();
                 });
                 std::thread::spawn(move || {
                     apply_result(scan_result_with_collections(tracks, cover_urls, status));
@@ -708,49 +489,6 @@ impl AppBridge {
                 self.scan_status_changed();
             }
         }
-    }
-
-    fn skip_missing_current_track(&mut self) {
-        let Some(path) = self
-            .player
-            .as_ref()
-            .and_then(Player::current_path)
-            .map(Path::to_path_buf)
-        else {
-            return;
-        };
-        if path.exists() {
-            return;
-        }
-        let Some(next) = self
-            .current_index
-            .and_then(|current| next_track_index(current, self.playback_tracks.len()))
-        else {
-            self.stop_playback_silently();
-            return;
-        };
-        if let Ok(next) = i32::try_from(next) {
-            self.play_queue_row(next);
-        }
-        let missing = self
-            .player
-            .as_ref()
-            .and_then(Player::current_path)
-            .is_none_or(|current| !current.exists());
-        if missing {
-            self.stop_playback_silently();
-        }
-    }
-
-    fn stop_playback_silently(&mut self) {
-        if let Some(player) = self.player.as_mut() {
-            let _ = player.stop();
-        }
-        self.playback_state = "stopped".into();
-        self.playback_error = QString::default();
-        self.playback_position = 0;
-        self.playback_changed();
-        self.playback_progress_changed();
     }
 
     fn apply_scan_result(&mut self, result: ScanResult) {
@@ -810,11 +548,7 @@ impl AppBridge {
         cover_urls: Vec<String>,
         apply_column_sort: bool,
     ) {
-        let current_path = self
-            .player
-            .as_ref()
-            .and_then(|player| player.current_path())
-            .map(Path::to_path_buf);
+        let current_path = self.playback.borrow().current_path();
         let mut tracks = tracks;
         let mut cover_urls = cover_urls;
         if apply_column_sort {
@@ -826,11 +560,12 @@ impl AppBridge {
             );
         }
         self.library_model.borrow_mut().replace(tracks, cover_urls);
-        if self.playback_tracks.is_empty() {
-            self.current_index = current_path
-                .as_ref()
-                .and_then(|path| self.library_model.borrow().position_of_path(path));
-        }
+        let position = current_path
+            .as_ref()
+            .and_then(|path| self.library_model.borrow().position_of_path(path));
+        self.playback
+            .borrow_mut()
+            .set_current_index_if_idle(position);
     }
 
     fn sort_visible_tracks(&mut self) {
@@ -846,30 +581,6 @@ impl AppBridge {
             .and_then(|index| self.library_cover_urls.get(index))
             .cloned()
             .unwrap_or_default()
-    }
-
-    fn handle_player_event(&mut self, event: PlayerEvent) {
-        match event {
-            PlayerEvent::EndOfStream => self.play_next_internal(),
-            PlayerEvent::Error(error) => self.set_playback_error(error),
-            PlayerEvent::Progress { position, duration } => {
-                self.apply_playback_progress(position, duration);
-            }
-        }
-    }
-
-    fn apply_playback_progress(&mut self, position: Duration, duration: Option<Duration>) {
-        let position = duration_millis(Some(position));
-        let duration = duration_millis(duration);
-        if position != self.playback_position
-            || (duration > 0 && duration != self.playback_duration)
-        {
-            self.playback_position = position;
-            if duration > 0 {
-                self.playback_duration = duration;
-            }
-            self.playback_progress_changed();
-        }
     }
 
     fn apply_collections(&mut self, artists: Vec<CollectionEntry>, albums: Vec<CollectionEntry>) {
@@ -963,19 +674,12 @@ impl AppBridge {
             .reset(entry.tracks, entry.cover_urls);
         self.collections_changed();
     }
-    fn set_playback_error(&mut self, error: String) {
-        self.play_in_flight = false;
-        self.queued_play_row = None;
-        self.playback_ui_generation = self.playback_ui_generation.wrapping_add(1);
-        self.playback_state = "stopped".into();
-        self.playback_error = error.into();
-        self.playback_changed();
-    }
 }
 
 pub fn register_qml_types() {
     qml_register_type::<AppBridge>(cstr!("Qingyin"), 1, 0, cstr!("AppBridge"));
     qml_register_type::<TrackListModel>(cstr!("Qingyin"), 1, 0, cstr!("TrackListModel"));
+    qml_register_type::<PlaybackController>(cstr!("Qingyin"), 1, 0, cstr!("PlaybackController"));
 }
 
 fn pointer_log_path() -> &'static PathBuf {
@@ -1316,11 +1020,11 @@ fn prepare_cached_cover(data: &[u8]) -> Option<Vec<u8>> {
     Some(output.into_inner())
 }
 
-const fn previous_track_index(current: usize) -> usize {
+pub(crate) const fn previous_track_index(current: usize) -> usize {
     current.saturating_sub(1)
 }
 
-const fn next_track_index(current: usize, track_count: usize) -> Option<usize> {
+pub(crate) const fn next_track_index(current: usize, track_count: usize) -> Option<usize> {
     match current.checked_add(1) {
         Some(next) if next < track_count => Some(next),
         _ => None,
@@ -1351,7 +1055,7 @@ pub(crate) fn format_duration(track: &TrackMetadata) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
-fn duration_millis(duration: Option<Duration>) -> i64 {
+pub(crate) fn duration_millis(duration: Option<Duration>) -> i64 {
     duration.map_or(0, |duration| {
         i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
     })

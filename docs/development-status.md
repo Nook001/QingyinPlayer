@@ -82,6 +82,7 @@
 - [`AppBridge`](../crates/ui_bridge/src/lib.rs) 已注册为 `Qingyin 1.0/AppBridge`。
 - QML 可调用 `application_name()` 和 `version()`。
 - 曲库表绑定独立的 `TrackListModel`（标题、歌手、专辑、时长、路径、封面），与会话对象分开；详情列表共用同一套角色映射。
+- [`PlaybackController`](../crates/ui_bridge/src/playback.rs) 承接 load/play/EOS/进度/音量；[`PlayerBar.qml`](../qml/PlayerBar.qml) 绑定 `backend.playback`。
 - 文件夹扫描在工作线程执行，并通过 Qt queued callback 在主线程重置曲库模型。
 - QML 可调用 `add_library_folder`、`play_track`、`toggle_playback`、`play_previous` 和
   `play_next`。
@@ -107,7 +108,7 @@
 | Library | 递归增量扫描、失败摘要、数据库持久化、歌手/专辑聚合、运行期文件监听 | 细粒度扫描进度仍未按文件回调 |
 | Storage | SQLite schema、事务 upsert、列表、删除、目录前缀删除和分字段拼音搜索 | 尚无独立聚合查询，当前从曲目列表聚合 |
 | Chinese | 全拼与首字母搜索键、拼音排序、多音字覆盖、`ARTISTSORT` | 外部 TOML 多音字配置尚未提供 |
-| UI Bridge | 曲库模型、后台扫描、搜索、拼音排序、播放控制、EOS 与错误处理、歌手/专辑模型、运行期监听 | 尚无细粒度扫描进度 |
+| UI Bridge | 曲库模型、后台扫描、搜索、拼音排序、播放控制器、EOS 与错误处理、歌手/专辑模型、运行期监听 | 尚无细粒度扫描进度 |
 | QML | 曲库内搜索、排序、封面、连续播放、完整播放栏、导航、双主题、歌手和专辑详情 | 播放队列尚未可视化 |
 
 ## 待实现接口

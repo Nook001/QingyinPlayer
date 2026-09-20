@@ -278,7 +278,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 104
                 theme: window
-                playerBackend: backend
+                playerBackend: backend.playback
             }
         }
     }
