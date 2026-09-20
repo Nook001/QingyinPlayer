@@ -57,11 +57,17 @@ Item {
         property int playback_position: 0
         property int playback_duration: 60000
         property real player_volume: 0.5
+        property string play_mode: "sequential"
         property int lastSeek: -1
         function seek_to(position) { lastSeek = position }
         function toggle_playback() {}
         function play_previous() {}
         function play_next() {}
+        function cycle_play_mode() {
+            play_mode = play_mode === "sequential"
+                ? "shuffle"
+                : (play_mode === "shuffle" ? "repeatOne" : "sequential")
+        }
         function set_player_volume(volume) { player_volume = volume }
         function flush_volume() {}
     }
@@ -112,6 +118,16 @@ Item {
             bar.toggleMute()
             compare(playerMock.player_volume, 0.5)
             verify(!bar.muted)
+        }
+
+        function test_play_mode_cycles() {
+            compare(playerMock.play_mode, "sequential")
+            playerMock.cycle_play_mode()
+            compare(playerMock.play_mode, "shuffle")
+            playerMock.cycle_play_mode()
+            compare(playerMock.play_mode, "repeatOne")
+            playerMock.cycle_play_mode()
+            compare(playerMock.play_mode, "sequential")
         }
     }
 

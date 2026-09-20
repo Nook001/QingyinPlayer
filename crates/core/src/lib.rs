@@ -126,6 +126,45 @@ impl SortOrder {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlayMode {
+    #[default]
+    Sequential,
+    Shuffle,
+    RepeatOne,
+}
+
+impl PlayMode {
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "" | "sequential" => Some(Self::Sequential),
+            "shuffle" => Some(Self::Shuffle),
+            "repeatOne" | "repeat_one" | "repeatone" => Some(Self::RepeatOne),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sequential => "sequential",
+            Self::Shuffle => "shuffle",
+            Self::RepeatOne => "repeatOne",
+        }
+    }
+
+    #[must_use]
+    pub const fn cycled(self) -> Self {
+        match self {
+            Self::Sequential => Self::Shuffle,
+            Self::Shuffle => Self::RepeatOne,
+            Self::RepeatOne => Self::Sequential,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_version")]
@@ -140,6 +179,8 @@ pub struct Settings {
     pub sort_column: SortColumn,
     #[serde(default = "default_sort_ascending", alias = "sort_ascending")]
     pub sort_ascending: bool,
+    #[serde(default, deserialize_with = "deserialize_play_mode")]
+    pub play_mode: PlayMode,
 }
 
 impl Default for Settings {
@@ -151,6 +192,7 @@ impl Default for Settings {
             volume: DEFAULT_VOLUME,
             sort_column: SortColumn::Title,
             sort_ascending: true,
+            play_mode: PlayMode::Sequential,
         }
     }
 }
@@ -317,6 +359,14 @@ where
     Ok(SortColumn::from_name(&value).unwrap_or_default())
 }
 
+fn deserialize_play_mode<'de, D>(deserializer: D) -> Result<PlayMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(PlayMode::from_name(&value).unwrap_or_default())
+}
+
 fn default_version() -> u32 {
     SETTINGS_VERSION
 }
@@ -397,6 +447,7 @@ mod tests {
             volume: 1.8,
             sort_column: SortColumn::Album,
             sort_ascending: false,
+            play_mode: PlayMode::Shuffle,
             ..Settings::default()
         };
         settings.add_music_directory("/music".into());
@@ -408,6 +459,7 @@ mod tests {
         assert!((loaded.volume - 1.0).abs() < f64::EPSILON);
         assert_eq!(loaded.sort_column, SortColumn::Album);
         assert!(!loaded.sort_ascending);
+        assert_eq!(loaded.play_mode, PlayMode::Shuffle);
         assert_eq!(loaded.music_directories, vec![PathBuf::from("/music")]);
         assert!(Settings::load_status_from(&path).can_prune_library());
     }
@@ -432,7 +484,13 @@ mod tests {
         let loaded = Settings::load_from(&settings_path).unwrap();
         assert_eq!(loaded.sort_column, SortColumn::Title);
         assert!(loaded.sort_ascending);
+        assert_eq!(loaded.play_mode, PlayMode::Sequential);
         assert!((loaded.volume - 1.0).abs() < f64::EPSILON);
+
+        let mode_path = unique_temp_path("play-mode.toml");
+        fs::write(&mode_path, "version = 1\nplay_mode = \"loop-forever\"\n").unwrap();
+        let loaded_mode = Settings::load_from(&mode_path).unwrap();
+        assert_eq!(loaded_mode.play_mode, PlayMode::Sequential);
     }
 
     #[test]

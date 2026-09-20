@@ -6,7 +6,7 @@ use collections::TrackListModel;
 use cstr::cstr;
 use library_session::{HostEvent, LibrarySession};
 use playback::PlaybackController;
-use qingyin_core::{Settings, SettingsLoad, SortColumn};
+use qingyin_core::{PlayMode, Settings, SettingsLoad, SortColumn};
 use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
@@ -198,12 +198,16 @@ impl AppBridge {
         self.playback
             .borrow_mut()
             .apply_saved_volume(self.settings.volume);
+        self.playback
+            .borrow_mut()
+            .apply_saved_play_mode(self.settings.play_mode);
         self.music_folders = format_music_folders(&self.settings.music_directories).into();
         self.settings_changed();
     }
 
     fn capture_settings_from_ui(&mut self) {
         self.settings.volume = self.playback.borrow().volume();
+        self.settings.play_mode = self.playback.borrow().play_mode();
         {
             let library = self.library.borrow();
             self.settings.music_directories = library.music_directories().to_vec();
@@ -266,6 +270,21 @@ impl AppBridge {
             }
         });
         self.playback.borrow_mut().set_volume_persist(persist);
+
+        let mode_bridge = QPointer::from(&*self);
+        let persist_mode = qmetaobject::queued_callback(move |mode: PlayMode| {
+            let Some(bridge) = mode_bridge.as_pinned() else {
+                return;
+            };
+            let mut bridge = bridge.borrow_mut();
+            if bridge.settings.play_mode != mode {
+                bridge.settings.play_mode = mode;
+                bridge.persist_settings(false);
+            }
+        });
+        self.playback
+            .borrow_mut()
+            .set_play_mode_persist(persist_mode);
     }
 }
 
@@ -311,15 +330,22 @@ pub(crate) fn sort_snapshots(tracks: &mut [TrackSnapshot], column: SortColumn, a
     });
 }
 
-pub(crate) const fn previous_track_index(current: usize) -> usize {
-    current.saturating_sub(1)
+pub(crate) const fn previous_track_index(current: usize, track_count: usize) -> Option<usize> {
+    if track_count == 0 {
+        return None;
+    }
+    Some(if current.is_multiple_of(track_count) {
+        track_count - 1
+    } else {
+        (current % track_count) - 1
+    })
 }
 
 pub(crate) const fn next_track_index(current: usize, track_count: usize) -> Option<usize> {
-    match current.checked_add(1) {
-        Some(next) if next < track_count => Some(next),
-        _ => None,
+    if track_count == 0 {
+        return None;
     }
+    Some((current % track_count + 1) % track_count)
 }
 
 pub(crate) fn format_duration(track: &TrackMetadata) -> String {
@@ -340,12 +366,13 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn track_navigation_stops_at_list_boundaries() {
-        assert_eq!(previous_track_index(0), 0);
-        assert_eq!(previous_track_index(3), 2);
+    fn track_navigation_wraps_the_list() {
+        assert_eq!(previous_track_index(0, 0), None);
+        assert_eq!(previous_track_index(0, 4), Some(3));
+        assert_eq!(previous_track_index(3, 4), Some(2));
         assert_eq!(next_track_index(0, 2), Some(1));
-        assert_eq!(next_track_index(1, 2), None);
-        assert_eq!(next_track_index(usize::MAX, usize::MAX), None);
+        assert_eq!(next_track_index(1, 2), Some(0));
+        assert_eq!(next_track_index(0, 0), None);
     }
 
     #[test]

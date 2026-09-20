@@ -2,11 +2,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use qingyin_core::PlayMode;
 use qingyin_library::TrackSnapshot;
 use qingyin_player::{
     CommandId, CommandKind, FakeHandle, LoadGeneration, PlaybackState, Player, PlayerEvent,
 };
 use qmetaobject::prelude::*;
+use rand::seq::SliceRandom;
+use rand::{Rng, rng};
 
 const MAX_MISSING_SKIPS: usize = 10_000;
 
@@ -45,6 +48,9 @@ pub(crate) struct PlaybackEngine {
     pub cover: String,
     pub error: String,
     pub pending_row: Option<usize>,
+    pub mode: PlayMode,
+    pub shuffle_order: Vec<usize>,
+    pub shuffle_index: usize,
     pending_command: Option<(CommandId, CommandKind)>,
 }
 
@@ -66,6 +72,9 @@ impl Default for PlaybackEngine {
             cover: String::new(),
             error: String::new(),
             pending_row: None,
+            mode: PlayMode::Sequential,
+            shuffle_order: Vec::new(),
+            shuffle_index: 0,
             pending_command: None,
         }
     }
@@ -176,15 +185,22 @@ impl PlaybackEngine {
     }
 
     pub fn skip_missing(&mut self, exists: impl Fn(&Path) -> bool) -> Option<usize> {
+        self.ensure_shuffle_order();
         let start = self.current?;
-        let len = self.queue.len();
+        let order = self.navigation_order();
+        let len = order.len();
         if len == 0 {
             return None;
         }
+        let start_pos = order.iter().position(|&index| index == start).unwrap_or(0);
         let limit = len.min(MAX_MISSING_SKIPS);
         for offset in 1..=limit {
-            let index = (start + offset) % len;
+            let position = (start_pos + offset) % len;
+            let index = order[position];
             if exists(&self.queue[index].metadata.path) {
+                if self.mode == PlayMode::Shuffle {
+                    self.shuffle_index = position;
+                }
                 return Some(index);
             }
             if offset == len {
@@ -194,16 +210,162 @@ impl PlaybackEngine {
         None
     }
 
-    pub fn previous_index(&self) -> Option<usize> {
-        self.current
-            .filter(|index| *index > 0)
-            .map(crate::previous_track_index)
+    pub fn previous_index(&mut self) -> Option<usize> {
+        self.ensure_shuffle_order();
+        match self.mode {
+            PlayMode::Shuffle => {
+                let len = self.shuffle_order.len();
+                if len == 0 {
+                    return None;
+                }
+                let previous = if self.shuffle_index == 0 {
+                    len - 1
+                } else {
+                    self.shuffle_index - 1
+                };
+                Some(self.shuffle_order[previous])
+            }
+            PlayMode::Sequential | PlayMode::RepeatOne => {
+                crate::previous_track_index(self.current?, self.queue.len())
+            }
+        }
     }
 
-    pub fn next_index(&self) -> Option<usize> {
-        self.current
-            .and_then(|current| crate::next_track_index(current, self.queue.len()))
+    pub fn next_index(&mut self) -> Option<usize> {
+        self.ensure_shuffle_order();
+        match self.mode {
+            PlayMode::Shuffle => self.next_shuffle_index(),
+            PlayMode::Sequential | PlayMode::RepeatOne => {
+                crate::next_track_index(self.current?, self.queue.len())
+            }
+        }
     }
+
+    pub fn eos_index(&mut self) -> Option<usize> {
+        match self.mode {
+            PlayMode::RepeatOne => self.current,
+            PlayMode::Sequential | PlayMode::Shuffle => self.next_index(),
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: PlayMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        if mode == PlayMode::Shuffle
+            && let Some(current) = self.current
+        {
+            self.reshuffle_starting_at(current);
+        }
+    }
+
+    pub fn prepare_queue(&mut self, current: usize) {
+        self.current = Some(current);
+        if self.mode == PlayMode::Shuffle {
+            self.reshuffle_starting_at(current);
+        } else {
+            self.shuffle_order.clear();
+            self.shuffle_index = 0;
+        }
+    }
+
+    pub fn sync_shuffle_index(&mut self, current: usize) {
+        if self.mode != PlayMode::Shuffle {
+            return;
+        }
+        if let Some(position) = self
+            .shuffle_order
+            .iter()
+            .position(|&index| index == current)
+        {
+            self.shuffle_index = position;
+            return;
+        }
+        self.reshuffle_starting_at(current);
+    }
+
+    fn next_shuffle_index(&mut self) -> Option<usize> {
+        let len = self.shuffle_order.len();
+        if len == 0 {
+            return None;
+        }
+        if self.shuffle_index + 1 < len {
+            return Some(self.shuffle_order[self.shuffle_index + 1]);
+        }
+        let last = self.shuffle_order[self.shuffle_index];
+        self.reshuffle_avoiding(last);
+        self.shuffle_order.first().copied()
+    }
+
+    fn navigation_order(&self) -> Vec<usize> {
+        if self.mode == PlayMode::Shuffle && self.shuffle_order.len() == self.queue.len() {
+            self.shuffle_order.clone()
+        } else {
+            (0..self.queue.len()).collect()
+        }
+    }
+
+    fn ensure_shuffle_order(&mut self) {
+        if self.mode != PlayMode::Shuffle {
+            return;
+        }
+        let len = self.queue.len();
+        let current_in_order = self
+            .current
+            .is_some_and(|current| self.shuffle_order.contains(&current));
+        if self.shuffle_order.len() == len && current_in_order {
+            if let Some(current) = self.current
+                && let Some(position) = self
+                    .shuffle_order
+                    .iter()
+                    .position(|&index| index == current)
+            {
+                self.shuffle_index = position;
+            }
+            return;
+        }
+        match self.current {
+            Some(current) => self.reshuffle_starting_at(current),
+            None if len > 0 => self.reshuffle_starting_at(0),
+            None => {
+                self.shuffle_order.clear();
+                self.shuffle_index = 0;
+            }
+        }
+    }
+
+    fn reshuffle_starting_at(&mut self, first: usize) {
+        self.shuffle_order = shuffle_order_from(self.queue.len(), first, &mut rng());
+        self.shuffle_index = 0;
+    }
+
+    fn reshuffle_avoiding(&mut self, avoid: usize) {
+        self.shuffle_order = shuffle_order_avoiding(self.queue.len(), avoid, &mut rng());
+        self.shuffle_index = 0;
+    }
+}
+
+fn shuffle_order_from<R: Rng + ?Sized>(len: usize, first: usize, rng: &mut R) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let first = first.min(len - 1);
+    let mut rest: Vec<usize> = (0..len).filter(|&index| index != first).collect();
+    rest.shuffle(rng);
+    std::iter::once(first).chain(rest).collect()
+}
+
+fn shuffle_order_avoiding<R: Rng + ?Sized>(len: usize, avoid: usize, rng: &mut R) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let mut order: Vec<usize> = (0..len).collect();
+    order.shuffle(rng);
+    if len > 1 && order[0] == avoid {
+        order.swap(0, 1);
+    }
+    order
 }
 
 /// Load/play/EOS/progress/volume, bound by `PlayerBar`.
@@ -215,6 +377,7 @@ pub struct PlaybackController {
     fake: Option<FakeHandle>,
     engine: PlaybackEngine,
     persist_volume: Option<Arc<dyn Fn(f64) + Send + Sync>>,
+    persist_play_mode: Option<Arc<dyn Fn(PlayMode) + Send + Sync>>,
     playback_state: qt_property!(QString; NOTIFY playback_changed),
     current_title: qt_property!(QString; NOTIFY playback_changed),
     current_artist: qt_property!(QString; NOTIFY playback_changed),
@@ -227,6 +390,8 @@ pub struct PlaybackController {
     playback_duration_changed: qt_signal!(),
     player_volume: qt_property!(f64; NOTIFY player_volume_changed),
     player_volume_changed: qt_signal!(),
+    play_mode: qt_property!(QString; NOTIFY play_mode_changed),
+    play_mode_changed: qt_signal!(),
     toggle_playback: qt_method!(
         fn toggle_playback(&mut self) {
             self.toggle_playback_internal();
@@ -242,6 +407,11 @@ pub struct PlaybackController {
     play_next: qt_method!(
         fn play_next(&mut self) {
             self.play_next_internal();
+        }
+    ),
+    cycle_play_mode: qt_method!(
+        fn cycle_play_mode(&mut self) {
+            self.cycle_play_mode_internal();
         }
     ),
     seek_to: qt_method!(
@@ -273,9 +443,18 @@ impl PlaybackController {
         self.persist_volume = Some(Arc::new(persist));
     }
 
+    pub fn set_play_mode_persist(&mut self, persist: impl Fn(PlayMode) + Send + Sync + 'static) {
+        self.persist_play_mode = Some(Arc::new(persist));
+    }
+
     #[must_use]
     pub fn volume(&self) -> f64 {
         self.engine.volume
+    }
+
+    #[must_use]
+    pub fn play_mode(&self) -> PlayMode {
+        self.engine.mode
     }
 
     pub fn apply_saved_volume(&mut self, volume: f64) {
@@ -285,6 +464,11 @@ impl PlaybackController {
         if let Some(player) = self.player.as_mut() {
             let _ = player.set_volume(self.engine.volume);
         }
+    }
+
+    pub fn apply_saved_play_mode(&mut self, mode: PlayMode) {
+        self.engine.set_mode(mode);
+        self.publish_play_mode();
     }
 
     pub fn shutdown(&mut self) {
@@ -302,6 +486,7 @@ impl PlaybackController {
             .iter()
             .position(|track| track.id() == track_id)
         {
+            self.engine.prepare_queue(index);
             self.play_queue_index(index);
         }
     }
@@ -345,6 +530,7 @@ impl PlaybackController {
         self.engine.pending_command = Some((load_id, CommandKind::Load));
         self.engine.generation = player.generation();
         self.engine.current = Some(index);
+        self.engine.sync_shuffle_index(index);
         self.engine.requested = PlaybackState::Playing;
         self.engine.publish_current();
         let play_id = player.play();
@@ -388,6 +574,22 @@ impl PlaybackController {
 
     fn play_next_internal(&mut self) {
         match self.engine.next_index() {
+            Some(index) => self.play_queue_index(index),
+            None => self.stop_playback_silently(),
+        }
+    }
+
+    fn cycle_play_mode_internal(&mut self) {
+        let mode = self.engine.mode.cycled();
+        self.engine.set_mode(mode);
+        self.publish_play_mode();
+        if let Some(persist) = &self.persist_play_mode {
+            persist(mode);
+        }
+    }
+
+    fn play_eos_internal(&mut self) {
+        match self.engine.eos_index() {
             Some(index) => self.play_queue_index(index),
             None => self.stop_playback_silently(),
         }
@@ -444,7 +646,7 @@ impl PlaybackController {
         }
         self.apply_notify(notify);
         if eos {
-            self.play_next_internal();
+            self.play_eos_internal();
         }
     }
 
@@ -487,6 +689,11 @@ impl PlaybackController {
         self.playback_duration_changed();
     }
 
+    fn publish_play_mode(&mut self) {
+        self.play_mode = self.engine.mode.as_str().into();
+        self.play_mode_changed();
+    }
+
     fn stop_playback_silently(&mut self) {
         if let Some(player) = self.player.as_mut() {
             let _ = player.stop();
@@ -502,7 +709,8 @@ impl PlaybackController {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{shuffle_order_avoiding, shuffle_order_from, *};
+    use qingyin_core::PlayMode;
     use qingyin_metadata::TrackMetadata;
     use std::sync::mpsc;
 
@@ -564,6 +772,97 @@ mod tests {
             engine.skip_missing(|path| path.ends_with("c.flac")),
             Some(2)
         );
+    }
+
+    #[test]
+    fn sequential_navigation_wraps_the_queue() {
+        let mut engine = queued_engine(3);
+        engine.current = Some(2);
+        assert_eq!(engine.next_index(), Some(0));
+        engine.current = Some(0);
+        assert_eq!(engine.previous_index(), Some(2));
+        assert_eq!(engine.eos_index(), Some(1));
+    }
+
+    #[test]
+    fn shuffle_walks_a_permutation_and_previous_is_stable() {
+        let mut engine = queued_engine(4);
+        engine.mode = PlayMode::Shuffle;
+        engine.current = Some(1);
+        engine.shuffle_order = vec![1, 0, 3, 2];
+        engine.shuffle_index = 0;
+        let next = engine.next_index().unwrap();
+        assert_eq!(next, 0);
+        engine.current = Some(next);
+        assert_eq!(engine.previous_index(), Some(1));
+        let mut seen = vec![1];
+        engine.current = Some(1);
+        engine.shuffle_index = 0;
+        for _ in 0..3 {
+            let index = engine.next_index().unwrap();
+            engine.current = Some(index);
+            seen.push(index);
+        }
+        let mut unique = seen.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 4);
+    }
+
+    #[test]
+    fn shuffle_wrap_does_not_repeat_the_last_track() {
+        let mut engine = queued_engine(5);
+        engine.mode = PlayMode::Shuffle;
+        engine.current = Some(4);
+        engine.shuffle_order = vec![0, 1, 2, 3, 4];
+        engine.shuffle_index = 4;
+        let next = engine.next_index().unwrap();
+        assert_ne!(next, 4);
+        assert_eq!(engine.shuffle_index, 0);
+        let mut sorted = engine.shuffle_order.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn repeat_one_replays_current_on_eos_but_next_still_moves() {
+        let mut engine = queued_engine(3);
+        engine.mode = PlayMode::RepeatOne;
+        engine.current = Some(1);
+        assert_eq!(engine.eos_index(), Some(1));
+        assert_eq!(engine.next_index(), Some(2));
+        engine.current = Some(2);
+        assert_eq!(engine.next_index(), Some(0));
+    }
+
+    #[test]
+    fn shuffle_helpers_build_unique_orders() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let mut rng = StdRng::seed_from_u64(11);
+        let order = shuffle_order_from(8, 3, &mut rng);
+        assert_eq!(order[0], 3);
+        let mut sorted = order.clone();
+        sorted.sort();
+        assert_eq!(sorted, (0..8).collect::<Vec<_>>());
+
+        for seed in 0..32_u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let order = shuffle_order_avoiding(6, 4, &mut rng);
+            assert_ne!(order[0], 4);
+            let mut sorted = order.clone();
+            sorted.sort();
+            assert_eq!(sorted, (0..6).collect::<Vec<_>>());
+        }
+    }
+
+    fn queued_engine(count: usize) -> PlaybackEngine {
+        let mut engine = PlaybackEngine::default();
+        engine.queue = (0..count)
+            .map(|index| snapshot(&format!("t{index}"), &format!("/tmp/{index}.flac")))
+            .collect();
+        engine
     }
 
     #[test]

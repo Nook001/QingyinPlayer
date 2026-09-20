@@ -111,15 +111,18 @@ Module {
         Property { name: "playback_position"; type: "long"; notify: "playback_position_changed" }
         Property { name: "playback_duration"; type: "long"; notify: "playback_duration_changed" }
         Property { name: "player_volume"; type: "double"; notify: "player_volume_changed" }
+        Property { name: "play_mode"; type: "QString"; notify: "play_mode_changed" }
 
         Signal { name: "playback_changed" }
         Signal { name: "playback_position_changed" }
         Signal { name: "playback_duration_changed" }
         Signal { name: "player_volume_changed" }
+        Signal { name: "play_mode_changed" }
 
         Method { name: "toggle_playback" }
         Method { name: "play_previous" }
         Method { name: "play_next" }
+        Method { name: "cycle_play_mode" }
         Method {
             name: "seek_to"
             Parameter { name: "position"; type: "long" }

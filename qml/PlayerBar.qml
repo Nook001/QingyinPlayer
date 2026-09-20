@@ -224,6 +224,28 @@ Item {
                 Accessible.name: "下一首"
                 onClicked: Qt.callLater(function() { root.playerBackend.play_next() })
             }
+
+            FlatButton {
+                preferredWidth: 36
+                preferredHeight: 36
+                iconName: {
+                    if (root.playerBackend.play_mode === "shuffle")
+                        return "shuffle"
+                    if (root.playerBackend.play_mode === "repeatOne")
+                        return "repeatOne"
+                    return "repeat"
+                }
+                iconSize: 16
+                theme: root.theme
+                Accessible.name: {
+                    if (root.playerBackend.play_mode === "shuffle")
+                        return "随机播放"
+                    if (root.playerBackend.play_mode === "repeatOne")
+                        return "单曲循环"
+                    return "顺序播放"
+                }
+                onClicked: Qt.callLater(function() { root.playerBackend.cycle_play_mode() })
+            }
         }
     }
 
