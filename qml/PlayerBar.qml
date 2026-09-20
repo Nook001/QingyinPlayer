@@ -12,6 +12,8 @@ Item {
 
     focus: true
 
+    readonly property real progressInset: root.height / 2
+    readonly property int progressLineHeight: 2
     property real lastAudibleVolume: 0.7
     readonly property bool muted: root.playerBackend.player_volume <= 0.001
 
@@ -38,6 +40,86 @@ Item {
         radius: height / 2
         borderColor: root.theme.dividerColor
         borderWidth: 1
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.AllButtons
+        onWheel: function(wheel) {
+            wheel.accepted = true
+        }
+    }
+
+    Item {
+        id: progressEdge
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: root.progressInset
+        anchors.rightMargin: root.progressInset
+        anchors.top: parent.top
+        height: root.progressLineHeight
+        z: 4
+
+        RoundedRect {
+            anchors.fill: parent
+            radius: height / 2
+            color: root.theme.dividerColor
+
+            RoundedRect {
+                width: progressSlider.visualPosition * parent.width
+                height: parent.height
+                radius: height / 2
+                color: root.theme.accentColor
+            }
+        }
+    }
+
+    Slider {
+        id: progressSlider
+
+        anchors.left: progressEdge.left
+        anchors.right: progressEdge.right
+        anchors.top: parent.top
+        height: 16
+        z: 5
+        padding: 0
+        from: 0
+        to: Math.max(1, root.playerBackend.playback_duration)
+        enabled: root.playerBackend.current_title !== ""
+            && root.playerBackend.playback_duration > 0
+        live: true
+        Keys.onLeftPressed: {
+            const position = Math.max(0, Math.round(value) - 5000)
+            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+        }
+        Keys.onRightPressed: {
+            const position = Math.min(to, Math.round(value) + 5000)
+            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+        }
+        onPressedChanged: if (!pressed && enabled) {
+            const position = Math.round(value)
+            Qt.callLater(function() { root.playerBackend.seek_to(position) })
+        }
+
+        Binding {
+            target: progressSlider
+            property: "value"
+            value: root.playerBackend.playback_position
+            when: !progressSlider.pressed
+            restoreMode: Binding.RestoreNone
+        }
+
+        background: Item {
+            implicitHeight: 16
+        }
+
+        handle: Item {
+            implicitWidth: 1
+            implicitHeight: 1
+            visible: false
+        }
     }
 
     function formatTime(milliseconds) {
@@ -96,99 +178,24 @@ Item {
         }
     }
 
-    Column {
+    Row {
         id: transportColumn
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(280, Math.max(180, parent.width - 220))
-        spacing: 6
+        spacing: 10
 
-        RowLayout {
-            width: parent.width
-            spacing: 8
-
-            Text {
-                Layout.preferredWidth: 38
-                text: root.formatTime(progressSlider.pressed
-                    ? progressSlider.value
-                    : root.playerBackend.playback_position)
-                color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignRight
-                font.pixelSize: 11
-            }
-
-            Slider {
-                id: progressSlider
-
-                Layout.fillWidth: true
-                from: 0
-                to: Math.max(1, root.playerBackend.playback_duration)
-                enabled: root.playerBackend.current_title !== ""
-                    && root.playerBackend.playback_duration > 0
-                focus: true
-                Keys.onLeftPressed: {
-                    const position = Math.max(0, Math.round(value) - 5000)
-                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
-                }
-                Keys.onRightPressed: {
-                    const position = Math.min(to, Math.round(value) + 5000)
-                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
-                }
-                onPressedChanged: if (!pressed && enabled) {
-                    const position = Math.round(value)
-                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
-                }
-
-                Binding {
-                    target: progressSlider
-                    property: "value"
-                    value: root.playerBackend.playback_position
-                    when: !progressSlider.pressed
-                    restoreMode: Binding.RestoreNone
-                }
-
-                background: Rectangle {
-                    x: progressSlider.leftPadding
-                    y: progressSlider.topPadding + (progressSlider.availableHeight - height) / 2
-                    implicitHeight: 4
-                    width: progressSlider.availableWidth
-                    height: 4
-                    radius: 2
-                    antialiasing: true
-                    color: root.theme.dividerColor
-
-                    Rectangle {
-                        width: progressSlider.visualPosition * parent.width
-                        height: parent.height
-                        radius: 2
-                        color: root.theme.accentColor
-                    }
-                }
-
-                handle: RoundedRect {
-                    x: progressSlider.leftPadding + progressSlider.visualPosition
-                        * (progressSlider.availableWidth - width)
-                    y: progressSlider.topPadding + (progressSlider.availableHeight - height) / 2
-                    implicitWidth: 10
-                    implicitHeight: 10
-                    width: 10
-                    height: 10
-                    radius: 5
-                    visible: progressSlider.enabled
-                    color: root.theme.accentColor
-                }
-            }
-
-            Text {
-                Layout.preferredWidth: 38
-                text: root.formatTime(root.playerBackend.playback_duration)
-                color: root.theme.mutedTextColor
-                font.pixelSize: 11
-            }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 38
+            text: root.formatTime(progressSlider.pressed
+                ? progressSlider.value
+                : root.playerBackend.playback_position)
+            color: root.theme.mutedTextColor
+            horizontalAlignment: Text.AlignRight
+            font.pixelSize: 11
         }
 
         Row {
-            anchors.horizontalCenter: parent.horizontalCenter
             spacing: 8
 
             FlatButton {
@@ -246,6 +253,14 @@ Item {
                 }
                 onClicked: Qt.callLater(function() { root.playerBackend.cycle_play_mode() })
             }
+        }
+
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 38
+            text: root.formatTime(root.playerBackend.playback_duration)
+            color: root.theme.mutedTextColor
+            font.pixelSize: 11
         }
     }
 

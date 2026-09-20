@@ -50,15 +50,17 @@ Item {
                 Layout.maximumWidth: root.indexWidth
                 text: "#"
                 color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignRight
+                horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: 12
             }
 
             Text {
                 Layout.preferredWidth: 44
+                Layout.minimumWidth: 44
+                Layout.maximumWidth: 44
                 text: "封面"
                 color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignLeft
+                horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: 12
             }
 
@@ -160,16 +162,26 @@ Item {
                             Layout.preferredWidth: root.indexWidth
                             Layout.minimumWidth: root.indexWidth
                             Layout.maximumWidth: root.indexWidth
+                            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
                             text: String(trackRow.index + 1)
                             color: root.theme.mutedTextColor
-                            horizontalAlignment: Text.AlignRight
+                            horizontalAlignment: Text.AlignHCenter
                             font.pixelSize: 12
                         }
 
-                        CoverImage {
-                            displaySize: 44
-                            theme: root.theme
-                            source: trackRow.cover
+                        Item {
+                            Layout.preferredWidth: 44
+                            Layout.minimumWidth: 44
+                            Layout.maximumWidth: 44
+                            Layout.preferredHeight: 44
+                            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+
+                            CoverImage {
+                                anchors.centerIn: parent
+                                displaySize: 44
+                                theme: root.theme
+                                source: trackRow.cover
+                            }
                         }
 
                         ColumnLayout {
