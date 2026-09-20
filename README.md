@@ -50,7 +50,7 @@ qingyin/
 └── assets/
 ```
 
-产品边界与桥接决策见 [docs/architecture.md](docs/architecture.md)。功能完成度见 [docs/development-status.md](docs/development-status.md)。质量改动勾选清单见 [docs/quality-changes.md](docs/quality-changes.md)。
+产品边界与桥接决策见 [docs/architecture.md](docs/architecture.md)。开发阶段与待办见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
 

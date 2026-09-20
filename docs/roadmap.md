@@ -1,8 +1,7 @@
 # Qingyin 开发路线图
 
 本文以可验收的纵向功能为单位推进开发。架构边界以
-[`architecture.md`](architecture.md) 为准，完成状态以
-[`development-status.md`](development-status.md) 为准。
+[`architecture.md`](architecture.md) 为准。
 
 ## 阶段一：导入、展示并播放
 
