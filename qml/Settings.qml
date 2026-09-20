@@ -60,7 +60,7 @@ Item {
                     font.pixelSize: 14
                 }
 
-                background: Rectangle {
+                background: RoundedRect {
                     radius: 6
                     color: lightThemeButton.down || lightThemeButton.hovered
                         ? root.theme.hoverColor
@@ -86,7 +86,7 @@ Item {
                     font.pixelSize: 14
                 }
 
-                background: Rectangle {
+                background: RoundedRect {
                     radius: 6
                     color: darkThemeButton.down || darkThemeButton.hovered
                         ? root.theme.hoverColor

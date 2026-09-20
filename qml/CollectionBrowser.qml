@@ -39,7 +39,7 @@ Item {
                 preferredWidth: 40
                 preferredHeight: 40
                 theme: root.theme
-                text: "‹"
+                iconName: "chevronLeft"
                 Accessible.name: "返回"
                 onClicked: Qt.callLater(function() { root.collectionClosed() })
             }
@@ -126,7 +126,7 @@ Item {
                     GridView.onPooled: collectionCard.highlighted = false
                     GridView.onReused: collectionCard.highlighted = false
 
-                    background: Rectangle {
+                    background: RoundedRect {
                         color: collectionCard.hovered ? root.theme.hoverColor : "transparent"
                         radius: 10
                     }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use qingyin_chinese::{contains_han, search_key};
-use qingyin_metadata::{FileFingerprint, TrackMetadata};
+use qingyin_metadata::{FileFingerprint, TrackMetadata, unique_credited_artists};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use thiserror::Error;
@@ -577,9 +577,11 @@ fn rebuild_search_terms(connection: &Connection) -> Result<(), StorageError> {
     for (track_id, title, album) in tracks {
         let mut artist_statement = connection
             .prepare("SELECT artist FROM track_artists WHERE track_id = ?1 ORDER BY position")?;
-        let artists = artist_statement
-            .query_map([track_id], |row| row.get(0))?
-            .collect::<Result<Vec<String>, _>>()?;
+        let artists = unique_credited_artists(
+            artist_statement
+                .query_map([track_id], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?,
+        );
         replace_search_terms(connection, track_id, &title, &artists, album.as_deref())?;
     }
     Ok(())
@@ -643,10 +645,11 @@ fn upsert_track_on(
     drop(statement);
 
     connection.execute("DELETE FROM track_artists WHERE track_id = ?1", [track_id])?;
+    let artists = unique_credited_artists(track.artists.iter());
     let mut artist_statement = connection.prepare_cached(
         "INSERT INTO track_artists (track_id, artist, position) VALUES (?1, ?2, ?3)",
     )?;
-    for (position, artist) in track.artists.iter().enumerate() {
+    for (position, artist) in artists.iter().enumerate() {
         let position = i64::try_from(position).map_err(|_| StorageError::ArtistPositionOverflow)?;
         artist_statement.execute(params![track_id, artist, position])?;
     }
@@ -655,7 +658,7 @@ fn upsert_track_on(
         connection,
         track_id,
         &track.title,
-        &track.artists,
+        &artists,
         track.album.as_deref(),
     )?;
     Ok(track_id)
@@ -703,6 +706,9 @@ fn collect_joined_tracks(
                 tracks.push(stored_track(track_row, artists)?);
             }
         }
+    }
+    for track in &mut tracks {
+        track.metadata.artists = unique_credited_artists(track.metadata.artists.iter());
     }
     Ok(tracks)
 }
@@ -924,6 +930,28 @@ mod tests {
         assert_eq!(tracks[0].metadata, track);
         assert!(database.remove_track(&track.path).unwrap());
         assert!(database.list_tracks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn splits_joined_artist_credits_when_storing_and_listing() {
+        let mut database = Database::open_in_memory().expect("in-memory database should open");
+        let track = TrackMetadata::from_display(
+            "/music/duet.flac",
+            "合唱",
+            Some("专辑".into()),
+            vec!["Singer A、Singer B".into(), "or3o".into(), "OR3O".into()],
+            Some(Duration::from_secs(12)),
+        );
+        database.upsert_track(&track).unwrap();
+        let listed = database.list_tracks().unwrap();
+        assert_eq!(
+            listed[0].metadata.artists,
+            vec![
+                "Singer A".to_owned(),
+                "Singer B".to_owned(),
+                "OR3O".to_owned()
+            ]
+        );
     }
 
     #[test]

@@ -35,6 +35,8 @@ jobs:
             qml6-module-qtquick-window \
             qml6-module-qt-labs-folderlistmodel \
             qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-effects \
+            qml6-module-qtquick-shapes \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base \

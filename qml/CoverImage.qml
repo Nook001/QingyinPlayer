@@ -1,6 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Effects
+import QtQuick.Shapes
 import QtQuick.Window
 
 Item {
@@ -19,34 +21,71 @@ Item {
             return 64
         return 160
     }
-    readonly property int pixelSize: root.bucket * (Screen.devicePixelRatio >= 1.5 ? 2 : 1)
+    readonly property real dpr: Math.max(1, Screen.devicePixelRatio)
+    readonly property int pixelSize: Math.round(root.bucket * root.dpr)
+    readonly property int cornerRadius: Math.min(16, Math.max(8, Math.round(root.displaySize * 0.2)))
 
     width: root.displaySize
     height: root.displaySize
 
-    Rectangle {
+    RoundedRect {
         anchors.fill: parent
         color: root.theme.artworkColor
-        radius: Math.min(8, root.displaySize / 8)
-        clip: true
+        radius: root.cornerRadius
+    }
 
-        Image {
-            id: cover
-            anchors.fill: parent
-            source: root.source
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            sourceSize.width: root.pixelSize
-            sourceSize.height: root.pixelSize
-            visible: status === Image.Ready
-        }
+    Image {
+        id: cover
+        anchors.fill: parent
+        source: root.source
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        smooth: true
+        mipmap: true
+        sourceSize.width: root.pixelSize
+        sourceSize.height: root.pixelSize
+        visible: false
+    }
 
-        Text {
-            anchors.centerIn: parent
-            text: "♫"
-            color: root.theme.accentColor
-            font.pixelSize: Math.max(14, root.displaySize / 2.4)
-            visible: cover.status !== Image.Ready
+    Shape {
+        id: coverMask
+        anchors.fill: parent
+        visible: false
+        preferredRendererType: Shape.CurveRenderer
+        antialiasing: true
+        layer.enabled: true
+        layer.smooth: true
+        layer.textureSize: Qt.size(
+            Math.max(1, Math.round(width * root.dpr)),
+            Math.max(1, Math.round(height * root.dpr)))
+
+        ShapePath {
+            fillColor: "#FFFFFF"
+            strokeWidth: 0
+
+            PathRectangle {
+                width: coverMask.width
+                height: coverMask.height
+                radius: Math.min(root.cornerRadius, coverMask.width / 2, coverMask.height / 2)
+            }
         }
+    }
+
+    MultiEffect {
+        anchors.fill: parent
+        source: cover
+        maskEnabled: true
+        maskSource: coverMask
+        maskThresholdMin: 0.35
+        maskSpreadAtMin: 0.15
+        visible: cover.status === Image.Ready
+    }
+
+    Icon {
+        anchors.centerIn: parent
+        name: "library"
+        size: Math.max(14, Math.round(root.displaySize / 2.4))
+        color: root.theme.accentColor
+        visible: cover.status !== Image.Ready
     }
 }

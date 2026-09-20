@@ -22,6 +22,7 @@ Item {
         readonly property color subtleColor: "#eee"
         readonly property color artworkColor: "#e8e3da"
         readonly property color surfaceColor: "#fafbf8"
+        readonly property bool darkTheme: false
     }
 
     ListModel {
@@ -68,7 +69,7 @@ Item {
     PlayerBar {
         id: bar
         width: 900
-        height: 104
+        height: 80
         y: 600
         theme: mockTheme
         playerBackend: playerMock

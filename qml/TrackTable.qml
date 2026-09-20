@@ -43,6 +43,7 @@ Item {
                 Layout.preferredWidth: 44
                 text: "封面"
                 color: root.theme.mutedTextColor
+                horizontalAlignment: Text.AlignLeft
                 font.pixelSize: 12
             }
 
@@ -51,6 +52,8 @@ Item {
                 preferredHeight: 28
                 theme: root.theme
                 enabled: root.sortable
+                contentAlignment: Text.AlignLeft
+                fontPixelSize: 12
                 text: root.heading("歌曲名", "title")
                 Accessible.name: "按歌曲名排序"
                 onClicked: if (root.sortable)
@@ -62,6 +65,8 @@ Item {
                 preferredHeight: 28
                 theme: root.theme
                 enabled: root.sortable
+                contentAlignment: Text.AlignLeft
+                fontPixelSize: 12
                 text: root.heading("专辑", "album")
                 Accessible.name: "按专辑排序"
                 onClicked: if (root.sortable)
@@ -73,6 +78,8 @@ Item {
                 preferredHeight: 28
                 theme: root.theme
                 enabled: root.sortable
+                contentAlignment: Text.AlignRight
+                fontPixelSize: 12
                 text: root.heading("时长", "duration")
                 Accessible.name: "按时长排序"
                 onClicked: if (root.sortable)
@@ -113,7 +120,7 @@ Item {
                 ListView.onPooled: trackRow.highlighted = false
                 ListView.onReused: trackRow.highlighted = false
 
-                background: Rectangle {
+                    background: RoundedRect {
                     color: trackRow.hovered ? root.theme.hoverColor : "transparent"
                     radius: 5
                 }
@@ -136,18 +143,22 @@ Item {
 
                         Text {
                             Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignLeft
                             text: trackRow.title
                             color: root.theme.textColor
                             elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignLeft
                             font.pixelSize: 14
                             font.weight: Font.DemiBold
                         }
 
                         Text {
                             Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignLeft
                             text: trackRow.artist || "未知歌手"
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignLeft
                             font.pixelSize: 12
                         }
                     }

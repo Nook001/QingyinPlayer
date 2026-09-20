@@ -11,7 +11,10 @@ use std::time::UNIX_EPOCH;
 
 use qingyin_chinese::{ReadingContext, compare_keys, sort_key, sort_key_in};
 use qingyin_core::SortColumn;
-use qingyin_metadata::{CoverArt, FileFingerprint, TrackMetadata, read_tagged_track};
+use qingyin_metadata::{
+    CoverArt, FileFingerprint, TrackMetadata, identity_key, preferred_display_name,
+    read_tagged_track, unique_credited_artists,
+};
 use qingyin_storage::{Database, StorageError, TrackId};
 use thiserror::Error;
 
@@ -181,18 +184,19 @@ pub struct MusicLibrary {
 pub fn aggregate_artists(tracks: &[TrackSnapshot]) -> Vec<CollectionEntry> {
     let mut groups = HashMap::<AlbumKey, Vec<TrackSnapshot>>::new();
     for snapshot in tracks {
-        if snapshot.metadata.artists.is_empty() {
+        let names = unique_credited_artists(snapshot.metadata.artists.iter());
+        if names.is_empty() {
             push_grouped_track(
                 &mut groups,
-                AlbumKey::Artist(UNKNOWN_ARTIST.to_owned()),
+                AlbumKey::Artist(identity_key(UNKNOWN_ARTIST)),
                 snapshot.clone(),
             );
             continue;
         }
-        for name in &snapshot.metadata.artists {
+        for name in names {
             push_grouped_track(
                 &mut groups,
-                AlbumKey::Artist(name.clone()),
+                AlbumKey::Artist(identity_key(&name)),
                 snapshot.clone(),
             );
         }
@@ -770,7 +774,7 @@ fn finish_collections(
     let mut groups = groups
         .into_iter()
         .map(|(key, tracks)| {
-            let name = key.display_name();
+            let name = collection_display_name(&key, &tracks);
             let sort = collection_name_key(&name, &tracks, kind);
             (key, name, sort, tracks)
         })
@@ -818,19 +822,14 @@ fn collection_subtitle(name: &str, tracks: &[TrackSnapshot], kind: CollectionKin
 }
 
 fn unique_artists(tracks: &[TrackSnapshot]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut artists = Vec::new();
-    for item in tracks {
-        for artist in &item.metadata.artists {
-            if artist.is_empty() || !seen.insert(artist.as_str()) {
-                continue;
-            }
-            artists.push((
-                artist.clone(),
-                sort_key_in(artist, None, ReadingContext::PersonName),
-            ));
-        }
-    }
+    let mut artists =
+        unique_credited_artists(tracks.iter().flat_map(|item| item.metadata.artists.iter()))
+            .into_iter()
+            .map(|name| {
+                let key = sort_key_in(&name, None, ReadingContext::PersonName);
+                (name, key)
+            })
+            .collect::<Vec<_>>();
     artists.sort_by(|left, right| compare_keys(&left.1, &right.1));
     artists.into_iter().map(|(name, _)| name).collect()
 }
@@ -852,14 +851,25 @@ fn collection_sort_tag<'a>(
     tracks: &'a [TrackSnapshot],
     kind: CollectionKind,
 ) -> Option<&'a str> {
+    let identity = identity_key(name);
     tracks.iter().find_map(|item| match kind {
         CollectionKind::Artist
             if item.metadata.artists.len() == 1
-                && item.metadata.artists.first().map(String::as_str) == Some(name) =>
+                && item
+                    .metadata
+                    .artists
+                    .first()
+                    .is_some_and(|artist| identity_key(artist) == identity) =>
         {
             nonempty_sort_tag(item.metadata.artist_sort.as_deref())
         }
-        CollectionKind::Album if item.metadata.album.as_deref() == Some(name) => {
+        CollectionKind::Album
+            if item
+                .metadata
+                .album
+                .as_deref()
+                .is_some_and(|album| identity_key(album) == identity) =>
+        {
             nonempty_sort_tag(item.metadata.album_sort.as_deref())
         }
         _ => None,
@@ -910,26 +920,40 @@ fn album_key(track: &TrackMetadata) -> AlbumKey {
     {
         None => AlbumKey::UnknownAlbum,
         Some(title) => AlbumKey::Album {
-            title: title.to_owned(),
-            album_artist: track
-                .album_artist
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("")
-                .to_owned(),
+            title: identity_key(title),
+            album_artist: identity_key(
+                track
+                    .album_artist
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(""),
+            ),
         },
     }
 }
 
-impl AlbumKey {
-    fn display_name(&self) -> String {
-        match self {
-            Self::Artist(name) | Self::Album { title: name, .. } => name.clone(),
-            Self::UnknownAlbum => UNKNOWN_ALBUM.to_owned(),
-        }
+fn collection_display_name(key: &AlbumKey, tracks: &[TrackSnapshot]) -> String {
+    match key {
+        AlbumKey::UnknownAlbum => UNKNOWN_ALBUM.to_owned(),
+        AlbumKey::Artist(identity) if identity == UNKNOWN_ARTIST => UNKNOWN_ARTIST.to_owned(),
+        AlbumKey::Artist(identity) => preferred_display_name(tracks.iter().flat_map(|item| {
+            unique_credited_artists(item.metadata.artists.iter())
+                .into_iter()
+                .filter(|name| identity_key(name) == *identity)
+        }))
+        .unwrap_or_else(|| identity.clone()),
+        AlbumKey::Album { title, .. } => preferred_display_name(
+            tracks
+                .iter()
+                .filter_map(|item| item.metadata.album.as_deref())
+                .filter(|name| identity_key(name) == *title),
+        )
+        .unwrap_or_else(|| title.clone()),
     }
+}
 
+impl AlbumKey {
     fn stable_id(&self) -> String {
         match self {
             Self::Artist(name) if name == UNKNOWN_ARTIST => "artist:unknown".into(),
@@ -1048,6 +1072,47 @@ mod tests {
             &artists[0].tracks[0].metadata,
             &artists[1].tracks[0].metadata
         ));
+    }
+
+    #[test]
+    fn splits_joined_artist_credits_when_aggregating() {
+        let tracks = snapshots(vec![test_track(
+            "夜色",
+            Some("清音"),
+            vec!["Singer A、Singer B"],
+            "/music/night.flac",
+        )]);
+        let artists = aggregate_artists(&tracks);
+        assert_eq!(
+            artists
+                .iter()
+                .map(|artist| artist.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Singer A", "Singer B"]
+        );
+        assert!(artists.iter().all(|artist| artist.track_count == 1));
+        let albums = aggregate_albums(&tracks);
+        assert_eq!(albums[0].subtitle, "Singer A、Singer B · 1 首歌曲");
+    }
+
+    #[test]
+    fn merges_case_variant_artists_and_albums_using_most_uppercase_name() {
+        let tracks = snapshots(vec![
+            test_track("One", Some("revival"), vec!["or3o"], "/music/one.flac"),
+            test_track("Two", Some("Revival"), vec!["OR3O"], "/music/two.flac"),
+            test_track("Three", Some("REVIVAL"), vec!["Or3o"], "/music/three.flac"),
+        ]);
+        let artists = aggregate_artists(&tracks);
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "OR3O");
+        assert_eq!(artists[0].track_count, 3);
+        assert_eq!(artists[0].id, "artist:or3o");
+
+        let albums = aggregate_albums(&tracks);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].name, "REVIVAL");
+        assert_eq!(albums[0].track_count, 3);
+        assert_eq!(albums[0].subtitle, "OR3O · 3 首歌曲");
     }
 
     #[test]

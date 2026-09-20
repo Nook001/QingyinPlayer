@@ -50,7 +50,7 @@ Item {
 
     FolderDialog {
         id: folderDialog
-        title: "选择音乐文件夹"
+        title: "选择音乐目录"
         onAccepted: root.session.add_library_folder(selectedFolder)
     }
 
@@ -61,59 +61,64 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
+            spacing: 10
 
-            ColumnLayout {
-                spacing: 3
-
-                Text {
-                    text: "曲库"
-                    color: root.theme.textColor
-                    font.pixelSize: 28
-                    font.weight: Font.DemiBold
-                }
-
-                Text {
-                    text: "按歌曲、专辑与歌手管理本地收藏"
-                    color: root.theme.mutedTextColor
-                    font.pixelSize: 13
-                }
+            Text {
+                text: "曲库"
+                color: root.theme.textColor
+                font.pixelSize: 28
+                font.weight: Font.DemiBold
             }
 
             Item { Layout.fillWidth: true }
 
-            AccentButton {
-                theme: root.theme
-                text: "添加文件夹"
-                enabled: !root.session.busy
-                onClicked: folderDialog.open()
-            }
-        }
+            TextField {
+                id: searchField
 
-        TextField {
-            id: searchField
+                Layout.preferredWidth: 220
+                Layout.maximumWidth: 260
+                Layout.preferredHeight: 32
+                placeholderText: "搜索歌曲"
+                leftPadding: 32
+                rightPadding: 12
+                font.pixelSize: 13
+                color: root.theme.textColor
+                onTextChanged: {
+                    if (text.trim() === "") {
+                        searchDelay.stop()
+                        root.session.clear_search()
+                    } else {
+                        searchDelay.restart()
+                    }
+                }
 
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            placeholderText: "搜索歌名、歌手或专辑，也可输入拼音或首字母"
-            leftPadding: 14
-            rightPadding: 14
-            font.pixelSize: 14
-            color: root.theme.textColor
-            onTextChanged: {
-                if (text.trim() === "") {
-                    searchDelay.stop()
-                    root.session.clear_search()
-                } else {
-                    searchDelay.restart()
+                background: RoundedRect {
+                    color: root.theme.fieldColor
+                    borderColor: searchField.activeFocus
+                        ? root.theme.accentColor : root.theme.dividerColor
+                    borderWidth: searchField.activeFocus ? 2 : 1
+                    radius: height / 2
+
+                    Icon {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "search"
+                        size: 14
+                        color: root.theme.mutedTextColor
+                    }
                 }
             }
 
-            background: Rectangle {
-                color: root.theme.fieldColor
-                border.color: searchField.activeFocus
-                    ? root.theme.accentColor : root.theme.dividerColor
-                border.width: searchField.activeFocus ? 2 : 1
-                radius: 6
+            AccentButton {
+                theme: root.theme
+                text: "添加目录"
+                iconName: "folderPlus"
+                preferredWidth: 108
+                preferredHeight: 32
+                cornerRadius: 16
+                enabled: !root.session.busy
+                onClicked: folderDialog.open()
             }
         }
 
@@ -163,19 +168,19 @@ Item {
                 anchors.centerIn: parent
                 spacing: 13
 
-                Rectangle {
+                RoundedRect {
                     width: 76
                     height: 76
                     anchors.horizontalCenter: parent.horizontalCenter
+                    visible: !root.filtering
                     radius: 38
                     color: root.theme.subtleColor
-                    visible: !root.filtering
 
-                    Text {
+                    Icon {
                         anchors.centerIn: parent
-                        text: "♫"
+                        name: "library"
+                        size: 30
                         color: root.theme.accentColor
-                        font.pixelSize: 30
                     }
                 }
 
@@ -196,7 +201,7 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: !root.filtering
-                    text: root.session.scan_status || "添加一个本地文件夹开始整理音乐"
+                    text: root.session.scan_status || "添加一个本地目录开始整理音乐"
                     color: root.theme.mutedTextColor
                     font.pixelSize: 13
                 }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -218,30 +219,88 @@ fn parse_tagged_file(
 }
 
 fn read_artists(tag: &Tag) -> Vec<String> {
-    let mut artists = unique_values(tag.get_strings(ItemKey::TrackArtists));
+    let mut artists = unique_credited_artists(tag.get_strings(ItemKey::TrackArtists));
     if artists.is_empty() {
-        artists = unique_values(tag.get_strings(ItemKey::TrackArtist));
+        artists = unique_credited_artists(tag.get_strings(ItemKey::TrackArtist));
     }
     if artists.is_empty() {
         artists = tag
             .artist()
-            .filter(|value| !value.trim().is_empty())
-            .map_or_else(Vec::new, |value| vec![value.trim().to_owned()]);
+            .map_or_else(Vec::new, |value| unique_credited_artists([value.as_ref()]));
     }
     artists
 }
 
-fn unique_values<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut artists = Vec::new();
+/// Case-insensitive identity for artist and album names.
+#[must_use]
+pub fn identity_key(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+/// Splits a single credited-artist field on Chinese separators without touching slashes.
+#[must_use]
+pub fn split_credited_artists(value: &str) -> Vec<String> {
+    value
+        .split(['、', '，'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Deduplicates credited artists by [`identity_key`], keeping the name with the most uppercase letters.
+#[must_use]
+pub fn unique_credited_artists<I, S>(values: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut order: Vec<String> = Vec::new();
+    let mut index = HashMap::<String, usize>::new();
     for value in values {
-        let value = value.trim();
-        if value.is_empty() || !seen.insert(value.to_owned()) {
+        for part in split_credited_artists(value.as_ref()) {
+            let id = identity_key(&part);
+            if let Some(&position) = index.get(&id) {
+                if uppercase_letter_count(&part) > uppercase_letter_count(&order[position]) {
+                    order[position] = part;
+                }
+            } else {
+                index.insert(id, order.len());
+                order.push(part);
+            }
+        }
+    }
+    order
+}
+
+/// Picks the variant with the most Unicode uppercase letters. Ties keep the first seen name.
+#[must_use]
+pub fn preferred_display_name<I, S>(names: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut best: Option<String> = None;
+    let mut best_upper = 0;
+    for name in names {
+        let name = name.as_ref().trim();
+        if name.is_empty() {
             continue;
         }
-        artists.push(value.to_owned());
+        let upper = uppercase_letter_count(name);
+        if best.as_ref().is_none_or(|_| upper > best_upper) {
+            best = Some(name.to_owned());
+            best_upper = upper;
+        }
     }
-    artists
+    best
+}
+
+fn uppercase_letter_count(value: &str) -> usize {
+    value
+        .chars()
+        .filter(|character| character.is_uppercase())
+        .count()
 }
 
 fn preferred_cover(tagged_file: &TaggedFile) -> Option<CoverArt> {
@@ -365,6 +424,49 @@ mod tests {
             ItemValue::Text("C".into()),
         ));
         assert_eq!(read_artists(&tag), vec!["A / B".to_owned(), "C".to_owned()]);
+    }
+
+    #[test]
+    fn splits_ideographic_comma_credited_artists() {
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.push_unchecked(TagItem::new(
+            ItemKey::TrackArtist,
+            ItemValue::Text("Singer A、Singer B".into()),
+        ));
+        assert_eq!(
+            read_artists(&tag),
+            vec!["Singer A".to_owned(), "Singer B".to_owned()]
+        );
+        assert_eq!(
+            unique_credited_artists(["甲、乙，丙"]),
+            vec!["甲".to_owned(), "乙".to_owned(), "丙".to_owned()]
+        );
+    }
+
+    #[test]
+    fn coalesces_case_variants_to_the_name_with_most_uppercase_letters() {
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.push_unchecked(TagItem::new(
+            ItemKey::TrackArtists,
+            ItemValue::Text("or3o".into()),
+        ));
+        tag.push_unchecked(TagItem::new(
+            ItemKey::TrackArtists,
+            ItemValue::Text("OR3O".into()),
+        ));
+        assert_eq!(read_artists(&tag), vec!["OR3O".to_owned()]);
+        assert_eq!(
+            unique_credited_artists(["or3o、Singer B", "OR3O", "singer b"]),
+            vec!["OR3O".to_owned(), "Singer B".to_owned()]
+        );
+        assert_eq!(
+            preferred_display_name(["revival", "Revival", "REVIVAL"]),
+            Some("REVIVAL".to_owned())
+        );
+        assert_eq!(
+            unique_credited_artists(["Or3O", "OR3o"]),
+            vec!["Or3O".to_owned()]
+        );
     }
 
     #[test]

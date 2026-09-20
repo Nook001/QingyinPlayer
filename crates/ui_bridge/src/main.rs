@@ -14,6 +14,8 @@ qrc!(embedded_qml,
         "TrackTable.qml",
         "CollectionBrowser.qml",
         "CoverImage.qml",
+        "Icon.qml",
+        "RoundedRect.qml",
         "FlatButton.qml",
         "AccentButton.qml",
         "Theme.qml",
@@ -31,6 +33,9 @@ fn main() {
     // SAFETY: Qt 尚未创建线程或 QApplication。
     unsafe {
         std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
+        if std::env::var_os("QSG_SAMPLES").is_none() {
+            std::env::set_var("QSG_SAMPLES", "4");
+        }
     }
 
     embedded_qml();

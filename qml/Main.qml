@@ -107,7 +107,7 @@ ApplicationWindow {
                         preferredWidth: 40
                         preferredHeight: 40
                         theme: appTheme
-                        text: window.sidebarCollapsed ? ">" : "<"
+                        iconName: window.sidebarCollapsed ? "chevronRight" : "chevronLeft"
                         Accessible.name: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
                         onClicked: window.sidebarCollapsed = !window.sidebarCollapsed
                     }
@@ -115,9 +115,9 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        { label: "曲库", icon: "♫" },
-                        { label: "歌手", icon: "♬" },
-                        { label: "专辑", icon: "▣" }
+                        { label: "曲库", icon: "library" },
+                        { label: "歌手", icon: "artist" },
+                        { label: "专辑", icon: "album" }
                     ]
 
                     delegate: Button {
@@ -136,7 +136,7 @@ ApplicationWindow {
                             Qt.callLater(function() { window.currentView = view })
                         }
 
-                        background: Rectangle {
+                        background: RoundedRect {
                             radius: 6
                             color: window.navButtonBackground(
                                 navigationButton,
@@ -146,14 +146,17 @@ ApplicationWindow {
                         contentItem: RowLayout {
                             spacing: 8
 
-                            Text {
+                            Item {
                                 Layout.preferredWidth: 34
-                                text: navigationButton.modelData.icon
-                                color: window.currentView === navigationButton.index
-                                    ? "#FFFFFF" : appTheme.sidebarTextColor
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                font.pixelSize: 17
+                                Layout.preferredHeight: 20
+
+                                Icon {
+                                    anchors.centerIn: parent
+                                    name: navigationButton.modelData.icon
+                                    size: 18
+                                    color: window.currentView === navigationButton.index
+                                        ? "#FFFFFF" : appTheme.sidebarTextColor
+                                }
                             }
 
                             Text {
@@ -194,7 +197,7 @@ ApplicationWindow {
                     Accessible.name: "设置"
                     onClicked: Qt.callLater(function() { window.currentView = 3 })
 
-                    background: Rectangle {
+                    background: RoundedRect {
                         radius: 6
                         color: window.navButtonBackground(settingsButton, window.currentView === 3)
                     }
@@ -202,13 +205,16 @@ ApplicationWindow {
                     contentItem: RowLayout {
                         spacing: 8
 
-                        Text {
+                        Item {
                             Layout.preferredWidth: 34
-                            text: "⚙"
-                            color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font.pixelSize: 17
+                            Layout.preferredHeight: 20
+
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "settings"
+                                size: 18
+                                color: window.currentView === 3 ? "#FFFFFF" : appTheme.sidebarTextColor
+                            }
                         }
 
                         Text {
@@ -230,6 +236,7 @@ ApplicationWindow {
                         color: appTheme.accentColor
                         visible: window.currentView === 3
                         radius: 2
+                        antialiasing: true
                     }
                 }
             }
@@ -240,18 +247,37 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
-            Loader {
-                id: pageLoader
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
-            }
 
-            PlayerBar {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 104
-                theme: appTheme
-                playerBackend: backend.playback
+                Loader {
+                    id: pageLoader
+                    anchors.fill: parent
+                    anchors.bottomMargin: 104
+                    sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
+                }
+
+                PlayerBar {
+                    id: playerBar
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.bottomMargin: 12
+                    height: 80
+                    theme: appTheme
+                    playerBackend: backend.playback
+                }
+
+                RoundedRect {
+                    z: playerBar.z - 1
+                    anchors.fill: playerBar
+                    anchors.topMargin: 6
+                    radius: playerBar.height / 2
+                    color: Qt.rgba(0, 0, 0, appTheme.darkTheme ? 0.4 : 0.12)
+                }
             }
         }
     }

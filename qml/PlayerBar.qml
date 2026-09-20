@@ -4,14 +4,21 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Rectangle {
+Item {
     id: root
 
     required property var theme
     required property var playerBackend
 
-    color: root.theme.surfaceColor
     focus: true
+
+    RoundedRect {
+        anchors.fill: parent
+        color: root.theme.surfaceColor
+        radius: height / 2
+        borderColor: root.theme.dividerColor
+        borderWidth: 1
+    }
 
     function formatTime(milliseconds) {
         const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
@@ -29,23 +36,16 @@ Rectangle {
             root.playerBackend.seek_to(root.playerBackend.playback_position + 5000)
     }
 
-    Rectangle {
-        anchors.top: parent.top
-        width: parent.width
-        height: 1
-        color: root.theme.dividerColor
-    }
-
     RowLayout {
         anchors.left: parent.left
         anchors.leftMargin: 22
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(250, Math.max(150,
             (parent.width - Math.min(420, parent.width * 0.42)) / 2 - 44))
-        spacing: 14
+        spacing: 12
 
         CoverImage {
-            displaySize: 54
+            displaySize: 48
             theme: root.theme
             source: root.playerBackend.current_cover
         }
@@ -80,42 +80,7 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(420, parent.width * 0.42)
-        spacing: 7
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 8
-
-            FlatButton {
-                preferredWidth: 44
-                preferredHeight: 40
-                theme: root.theme
-                text: "◀|"
-                enabled: root.playerBackend.current_title !== ""
-                Accessible.name: "上一首"
-                onClicked: Qt.callLater(function() { root.playerBackend.play_previous() })
-            }
-
-            FlatButton {
-                preferredWidth: 46
-                preferredHeight: 46
-                theme: root.theme
-                text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
-                enabled: root.playerBackend.current_title !== ""
-                Accessible.name: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
-                onClicked: Qt.callLater(function() { root.playerBackend.toggle_playback() })
-            }
-
-            FlatButton {
-                preferredWidth: 44
-                preferredHeight: 40
-                theme: root.theme
-                text: "|▶"
-                enabled: root.playerBackend.current_title !== ""
-                Accessible.name: "下一首"
-                onClicked: Qt.callLater(function() { root.playerBackend.play_next() })
-            }
-        }
+        spacing: 6
 
         RowLayout {
             width: parent.width
@@ -168,6 +133,7 @@ Rectangle {
                     width: progressSlider.availableWidth
                     height: 4
                     radius: 2
+                    antialiasing: true
                     color: root.theme.dividerColor
 
                     Rectangle {
@@ -178,12 +144,14 @@ Rectangle {
                     }
                 }
 
-                handle: Rectangle {
+                handle: RoundedRect {
                     x: progressSlider.leftPadding + progressSlider.visualPosition
                         * (progressSlider.availableWidth - width)
                     y: progressSlider.topPadding + (progressSlider.availableHeight - height) / 2
                     implicitWidth: 10
                     implicitHeight: 10
+                    width: 10
+                    height: 10
                     radius: 5
                     visible: progressSlider.enabled
                     color: root.theme.accentColor
@@ -197,6 +165,45 @@ Rectangle {
                 font.pixelSize: 11
             }
         }
+
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 8
+
+            FlatButton {
+                preferredWidth: 36
+                preferredHeight: 36
+                iconName: "skipBack"
+                iconSize: 18
+                theme: root.theme
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: "上一首"
+                onClicked: Qt.callLater(function() { root.playerBackend.play_previous() })
+            }
+
+            FlatButton {
+                preferredWidth: 36
+                preferredHeight: 36
+                iconName: root.playerBackend.playback_state === "playing" ? "pause" : "play"
+                iconSize: 16
+                emphasized: true
+                theme: root.theme
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
+                onClicked: Qt.callLater(function() { root.playerBackend.toggle_playback() })
+            }
+
+            FlatButton {
+                preferredWidth: 36
+                preferredHeight: 36
+                iconName: "skipForward"
+                iconSize: 18
+                theme: root.theme
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: "下一首"
+                onClicked: Qt.callLater(function() { root.playerBackend.play_next() })
+            }
+        }
     }
 
     RowLayout {
@@ -206,10 +213,10 @@ Rectangle {
         width: 130
         spacing: 8
 
-        Text {
-            text: "🔊"
+        Icon {
+            name: "volume"
+            size: 16
             color: root.theme.mutedTextColor
-            font.pixelSize: 15
         }
 
         Slider {
@@ -231,22 +238,26 @@ Rectangle {
                 width: volumeSlider.availableWidth
                 height: 4
                 radius: 2
+                antialiasing: true
                 color: root.theme.dividerColor
 
                 Rectangle {
                     width: volumeSlider.visualPosition * parent.width
                     height: parent.height
                     radius: 2
+                    antialiasing: true
                     color: root.theme.accentColor
                 }
             }
 
-            handle: Rectangle {
+            handle: RoundedRect {
                 x: volumeSlider.leftPadding + volumeSlider.visualPosition
                     * (volumeSlider.availableWidth - width)
                 y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
                 implicitWidth: 10
                 implicitHeight: 10
+                width: 10
+                height: 10
                 radius: 5
                 visible: volumeSlider.enabled
                 color: root.theme.accentColor
