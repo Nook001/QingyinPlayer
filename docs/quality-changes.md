@@ -132,7 +132,7 @@
 - [x] **Q-32** 中 · 工作线程回调携带 `thiserror` 枚举，而不是 `String`  
   完成：扫描/搜索失败在 Rust 侧可匹配，QML 仍显示中文文案。
 
-- [ ] **Q-33** 大 · 校对键从 `TrackMetadata` 拆到装入 UI 快照时计算  
+- [x] **Q-33** 大 · 校对键从 `TrackMetadata` 拆到装入 UI 快照时计算  
   完成：`metadata` crate 不再依赖 `chinese`；storage 仍持久化 `*_sort` 标签；列表排序行为不变。
 
 ---

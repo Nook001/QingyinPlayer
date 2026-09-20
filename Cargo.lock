@@ -1043,7 +1043,6 @@ name = "qingyin-metadata"
 version = "0.1.0"
 dependencies = [
  "lofty",
- "qingyin-chinese",
  "serde",
  "thiserror",
 ]
@@ -1074,7 +1073,6 @@ dependencies = [
  "cc",
  "cstr",
  "image",
- "qingyin-chinese",
  "qingyin-core",
  "qingyin-library",
  "qingyin-metadata",

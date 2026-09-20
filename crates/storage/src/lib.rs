@@ -464,24 +464,19 @@ fn stored_track(row: TrackRow, artists: Vec<String>) -> Result<StoredTrack, Stor
         .transpose()
         .map_err(|_| StorageError::DurationOverflow)?
         .map(Duration::from_millis);
-    let mut metadata = TrackMetadata {
-        path: row.path.into(),
-        title: row.title,
-        album: row.album,
-        artists,
-        duration,
-        title_sort: row.title_sort,
-        album_sort: row.album_sort,
-        artist_sort: row.artist_sort,
-        modified_at: row.modified_at,
-        title_key: String::new(),
-        album_key: String::new(),
-        artist_key: String::new(),
-    };
-    metadata.refresh_sort_keys();
     Ok(StoredTrack {
         id: row.id,
-        metadata,
+        metadata: TrackMetadata {
+            path: row.path.into(),
+            title: row.title,
+            album: row.album,
+            artists,
+            duration,
+            title_sort: row.title_sort,
+            album_sort: row.album_sort,
+            artist_sort: row.artist_sort,
+            modified_at: row.modified_at,
+        },
     })
 }
 
@@ -569,7 +564,6 @@ mod tests {
             .upsert_track(&track, 1)
             .expect("track should be inserted");
         track.title = "清音（更新）".into();
-        track.refresh_sort_keys();
         let second_id = database
             .upsert_track(&track, 2)
             .expect("track should be updated");
@@ -596,14 +590,12 @@ mod tests {
         );
         track.title_sort = Some("Qing Tian".into());
         track.artist_sort = Some("Jay Chou".into());
-        track.refresh_sort_keys();
         database.upsert_track(&track, 1).unwrap();
 
         let stored = database.list_tracks().unwrap();
         assert_eq!(stored[0].metadata.title_sort.as_deref(), Some("Qing Tian"));
         assert_eq!(stored[0].metadata.artist_sort.as_deref(), Some("Jay Chou"));
-        assert_eq!(stored[0].metadata.title_key, "Qing Tian");
-        assert_eq!(stored[0].metadata.artist_key, "Jay Chou");
+        assert!(stored[0].metadata.album_sort.is_none());
     }
 
     #[test]

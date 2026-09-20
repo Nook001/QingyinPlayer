@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use qingyin_library::CollectionEntry;
+use qingyin_library::{CollectionEntry, TrackSnapshot};
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
 
@@ -74,12 +74,12 @@ impl CollectionModel {
 #[derive(QObject, Default)]
 pub struct TrackListModel {
     base: qt_base_class!(trait QAbstractListModel),
-    tracks: Vec<TrackMetadata>,
+    tracks: Vec<TrackSnapshot>,
     cover_urls: Vec<String>,
 }
 
 impl TrackListModel {
-    pub fn replace(&mut self, tracks: Vec<TrackMetadata>, cover_urls: Vec<String>) {
+    pub fn replace(&mut self, tracks: Vec<TrackSnapshot>, cover_urls: Vec<String>) {
         self.begin_reset_model();
         self.tracks = tracks;
         self.cover_urls = cover_urls;
@@ -100,12 +100,20 @@ impl TrackListModel {
 
     #[must_use]
     pub fn snapshot(&self) -> (Vec<TrackMetadata>, Vec<String>) {
-        (self.tracks.clone(), self.cover_urls.clone())
+        (
+            self.tracks
+                .iter()
+                .map(|track| track.metadata.clone())
+                .collect(),
+            self.cover_urls.clone(),
+        )
     }
 
     #[must_use]
     pub fn position_of_path(&self, path: &Path) -> Option<usize> {
-        self.tracks.iter().position(|track| track.path == path)
+        self.tracks
+            .iter()
+            .position(|track| track.metadata.path == path)
     }
 }
 
@@ -151,7 +159,7 @@ impl QAbstractListModel for TrackListModel {
             return QVariant::default();
         };
         let cover = self.cover_urls.get(row).map_or("", String::as_str);
-        track_role_data(track, cover, role)
+        track_role_data(&track.metadata, cover, role)
     }
 
     fn role_names(&self) -> HashMap<i32, QByteArray> {

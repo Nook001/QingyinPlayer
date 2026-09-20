@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use image::{ImageFormat, ImageReader, Limits};
 use qingyin_library::{
-    CollectionEntry, LibraryError, LibraryWatcher, MusicLibrary, ScanEvent, WatchSummary,
-    aggregate_albums, aggregate_artists, is_library_track, prune_unwatched_tracks,
+    CollectionEntry, LibraryError, LibraryWatcher, MusicLibrary, ScanEvent, TrackSnapshot,
+    WatchSummary, aggregate_albums, aggregate_artists, is_library_track, prune_unwatched_tracks,
     watch_directories,
 };
 use qingyin_metadata::{CoverArt, TrackMetadata, read_cover};
@@ -29,7 +29,7 @@ const SEARCH_RESULT_LIMIT: usize = 500;
 
 #[derive(Debug)]
 struct ScanResult {
-    tracks: Vec<TrackMetadata>,
+    tracks: Vec<TrackSnapshot>,
     cover_urls: Vec<String>,
     artists: Vec<CollectionEntry>,
     albums: Vec<CollectionEntry>,
@@ -96,7 +96,7 @@ pub struct LibrarySession {
     /// Visible rows bound by the library `TrackTable` (search results or full library).
     library_model: qt_property!(RefCell<TrackListModel>; CONST),
     /// Full imported library, independent of the current search filter.
-    library_tracks: Vec<TrackMetadata>,
+    library_tracks: Vec<TrackSnapshot>,
     library_cover_urls: Vec<String>,
     music_directories: Vec<PathBuf>,
     host: LibraryHost,
@@ -393,7 +393,7 @@ impl LibrarySession {
                             .collect();
                         let apply_column_sort = !session.sort_column.is_empty();
                         session.replace_visible_tracks(
-                            result.tracks,
+                            snapshots_from(result.tracks),
                             cover_urls,
                             apply_column_sort,
                         );
@@ -551,7 +551,7 @@ impl LibrarySession {
 
     fn replace_visible_tracks(
         &mut self,
-        tracks: Vec<TrackMetadata>,
+        tracks: Vec<TrackSnapshot>,
         cover_urls: Vec<String>,
         apply_column_sort: bool,
     ) {
@@ -588,7 +588,7 @@ impl LibrarySession {
     fn library_cover_for_path(&self, path: &Path) -> String {
         self.library_tracks
             .iter()
-            .position(|track| track.path == path)
+            .position(|track| track.metadata.path == path)
             .and_then(|index| self.library_cover_urls.get(index))
             .cloned()
             .unwrap_or_default()
@@ -747,7 +747,7 @@ fn load_stored_library(roots: &[PathBuf]) -> Result<ScanResult, LibraryIoError> 
 }
 
 fn scan_result_with_collections(
-    tracks: Vec<TrackMetadata>,
+    tracks: Vec<TrackSnapshot>,
     cover_urls: Vec<String>,
     status: String,
 ) -> ScanResult {
@@ -762,26 +762,35 @@ fn scan_result_with_collections(
     }
 }
 
-fn load_stored_tracks() -> Result<Vec<TrackMetadata>, LibraryIoError> {
+fn load_stored_tracks() -> Result<Vec<TrackSnapshot>, LibraryIoError> {
     listed_tracks(&Database::open(database_path()?).map_err(LibraryIoError::OpenDatabase)?)
 }
 
-fn listed_tracks(database: &Database) -> Result<Vec<TrackMetadata>, LibraryIoError> {
+fn listed_tracks(database: &Database) -> Result<Vec<TrackSnapshot>, LibraryIoError> {
     database
         .list_tracks()
         .map_err(LibraryIoError::ListTracks)
         .map(|tracks| {
-            tracks
-                .into_iter()
-                .map(|track| track.metadata)
-                .collect::<Vec<_>>()
+            snapshots_from(
+                tracks
+                    .into_iter()
+                    .map(|track| track.metadata)
+                    .collect::<Vec<_>>(),
+            )
         })
 }
 
-fn tracks_in_library(tracks: Vec<TrackMetadata>, roots: &[PathBuf]) -> Vec<TrackMetadata> {
+fn snapshots_from(tracks: Vec<TrackMetadata>) -> Vec<TrackSnapshot> {
     tracks
         .into_iter()
-        .filter(|track| is_library_track(&track.path, roots))
+        .map(TrackSnapshot::from_metadata)
+        .collect()
+}
+
+fn tracks_in_library(tracks: Vec<TrackSnapshot>, roots: &[PathBuf]) -> Vec<TrackSnapshot> {
+    tracks
+        .into_iter()
+        .filter(|track| is_library_track(&track.metadata.path, roots))
         .collect()
 }
 
@@ -790,28 +799,31 @@ fn normalize_music_directory(path: PathBuf) -> PathBuf {
 }
 
 fn reuse_or_cache_covers(
-    previous_tracks: &[TrackMetadata],
+    previous_tracks: &[TrackSnapshot],
     previous_covers: &[String],
-    tracks: &[TrackMetadata],
+    tracks: &[TrackSnapshot],
 ) -> Vec<String> {
     let mut previous = HashMap::new();
     for (track, cover) in previous_tracks.iter().zip(previous_covers) {
         if !cover.is_empty() {
-            previous.insert(track.path.clone(), (track.modified_at, cover.clone()));
+            previous.insert(
+                track.metadata.path.clone(),
+                (track.metadata.modified_at, cover.clone()),
+            );
         }
     }
     let directory = cache_directory();
     tracks
         .iter()
         .map(|track| {
-            if let Some((modified_at, cover)) = previous.get(&track.path)
-                && *modified_at == track.modified_at
+            if let Some((modified_at, cover)) = previous.get(&track.metadata.path)
+                && *modified_at == track.metadata.modified_at
             {
                 return cover.clone();
             }
             directory
                 .as_ref()
-                .and_then(|directory| resolve_cover_url(directory, track, true))
+                .and_then(|directory| resolve_cover_url(directory, &track.metadata, true))
                 .unwrap_or_default()
         })
         .collect()
@@ -840,13 +852,15 @@ fn search_database(query: &str, roots: &[PathBuf]) -> Result<SearchResult, Libra
     Ok(SearchResult { tracks })
 }
 
-fn existing_cover_urls(tracks: &[TrackMetadata], read_source: bool) -> Vec<String> {
+fn existing_cover_urls(tracks: &[TrackSnapshot], read_source: bool) -> Vec<String> {
     let Some(directory) = cache_directory() else {
         return vec![String::new(); tracks.len()];
     };
     tracks
         .iter()
-        .map(|track| resolve_cover_url(&directory, track, read_source).unwrap_or_default())
+        .map(|track| {
+            resolve_cover_url(&directory, &track.metadata, read_source).unwrap_or_default()
+        })
         .collect()
 }
 
@@ -1009,9 +1023,12 @@ mod tests {
 
     #[test]
     fn reuses_cached_cover_urls_for_unchanged_paths() {
-        let previous_tracks = vec![test_track("A", "专辑", 10)];
+        let previous_tracks = snapshots_from(vec![test_track("A", "专辑", 10)]);
         let previous_covers = vec!["file:///cache/a.png".to_owned()];
-        let tracks = vec![test_track("A", "专辑", 10), test_track("B", "专辑", 12)];
+        let tracks = snapshots_from(vec![
+            test_track("A", "专辑", 10),
+            test_track("B", "专辑", 12),
+        ]);
         let covers = reuse_or_cache_covers(&previous_tracks, &previous_covers, &tracks);
         assert_eq!(covers[0], "file:///cache/a.png");
         assert_eq!(covers.len(), 2);
@@ -1030,7 +1047,7 @@ mod tests {
 
     #[test]
     fn aggregates_visible_library_into_artist_and_album_groups() {
-        let tracks = vec![
+        let tracks = snapshots_from(vec![
             TrackMetadata::from_display(
                 "/music/a.flac",
                 "A",
@@ -1045,7 +1062,7 @@ mod tests {
                 vec!["甲".into(), "乙".into()],
                 Some(Duration::from_secs(12)),
             ),
-        ];
+        ]);
         let covers = vec!["cover-a".to_owned(), "cover-b".to_owned()];
         let artists = aggregate_artists(&tracks, &covers);
         let albums = aggregate_albums(&tracks, &covers);

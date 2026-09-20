@@ -19,6 +19,62 @@ pub const UNKNOWN_ARTIST: &str = "未知歌手";
 pub const UNKNOWN_ALBUM: &str = "未知专辑";
 const UPSERT_BATCH_SIZE: usize = 50;
 
+/// Precomputed collation keys for one track. Built when loading a UI snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackCollationKeys {
+    pub title: String,
+    pub album: String,
+    pub artist: String,
+}
+
+impl TrackCollationKeys {
+    #[must_use]
+    pub fn from_track(track: &TrackMetadata) -> Self {
+        Self {
+            title: sort_key(&track.title, track.title_sort.as_deref()),
+            album: sort_key(
+                track.album.as_deref().unwrap_or(""),
+                track.album_sort.as_deref(),
+            ),
+            artist: sort_key(
+                track.artists.first().map_or("", String::as_str),
+                track.artist_sort.as_deref(),
+            ),
+        }
+    }
+}
+
+/// Tag fields plus collation keys, computed once when a track is loaded for UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackSnapshot {
+    pub metadata: TrackMetadata,
+    pub keys: TrackCollationKeys,
+}
+
+impl TrackSnapshot {
+    #[must_use]
+    pub fn from_metadata(metadata: TrackMetadata) -> Self {
+        let keys = TrackCollationKeys::from_track(&metadata);
+        Self { metadata, keys }
+    }
+
+    #[must_use]
+    pub fn cmp_column(&self, other: &Self, column: &str) -> Ordering {
+        let ordering = match column {
+            "album" => compare_keys(&self.keys.album, &other.keys.album),
+            "duration" => self.metadata.duration.cmp(&other.metadata.duration),
+            _ => compare_keys(&self.keys.title, &other.keys.title),
+        };
+        ordering.then_with(|| self.metadata.path.cmp(&other.metadata.path))
+    }
+}
+
+impl From<TrackMetadata> for TrackSnapshot {
+    fn from(metadata: TrackMetadata) -> Self {
+        Self::from_metadata(metadata)
+    }
+}
+
 const AUDIO_EXTENSIONS: &[&str] = &[
     "aac", "aif", "aiff", "ape", "flac", "m4a", "mp3", "mp4", "mpc", "ogg", "opus", "spx", "wav",
     "wv",
@@ -105,21 +161,28 @@ pub struct MusicLibrary {
 
 /// Groups tracks under each listed artist. Tracks without artists use [`UNKNOWN_ARTIST`].
 #[must_use]
-pub fn aggregate_artists(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<CollectionEntry> {
-    let mut groups = HashMap::<String, Vec<(Arc<TrackMetadata>, String)>>::new();
-    for (index, track) in tracks.iter().enumerate() {
+pub fn aggregate_artists(tracks: &[TrackSnapshot], cover_urls: &[String]) -> Vec<CollectionEntry> {
+    let mut groups = HashMap::<String, Vec<GroupedTrack>>::new();
+    for (index, snapshot) in tracks.iter().enumerate() {
         let cover = cover_url_at(cover_urls, index);
-        let shared = Arc::new(track.clone());
-        if track.artists.is_empty() {
-            push_grouped_track(&mut groups, UNKNOWN_ARTIST.to_owned(), shared, cover);
+        let shared = Arc::new(snapshot.metadata.clone());
+        if snapshot.metadata.artists.is_empty() {
+            push_grouped_track(
+                &mut groups,
+                UNKNOWN_ARTIST.to_owned(),
+                shared,
+                cover,
+                snapshot.keys.clone(),
+            );
             continue;
         }
-        for name in &track.artists {
+        for name in &snapshot.metadata.artists {
             push_grouped_track(
                 &mut groups,
                 name.clone(),
                 Arc::clone(&shared),
                 cover.clone(),
+                snapshot.keys.clone(),
             );
         }
     }
@@ -128,10 +191,11 @@ pub fn aggregate_artists(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec
 
 /// Groups tracks by album title. Tracks without an album use [`UNKNOWN_ALBUM`].
 #[must_use]
-pub fn aggregate_albums(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<CollectionEntry> {
-    let mut groups = HashMap::<String, Vec<(Arc<TrackMetadata>, String)>>::new();
-    for (index, track) in tracks.iter().enumerate() {
-        let name = track
+pub fn aggregate_albums(tracks: &[TrackSnapshot], cover_urls: &[String]) -> Vec<CollectionEntry> {
+    let mut groups = HashMap::<String, Vec<GroupedTrack>>::new();
+    for (index, snapshot) in tracks.iter().enumerate() {
+        let name = snapshot
+            .metadata
             .album
             .as_deref()
             .map(str::trim)
@@ -141,8 +205,9 @@ pub fn aggregate_albums(tracks: &[TrackMetadata], cover_urls: &[String]) -> Vec<
         push_grouped_track(
             &mut groups,
             name,
-            Arc::new(track.clone()),
+            Arc::new(snapshot.metadata.clone()),
             cover_url_at(cover_urls, index),
+            snapshot.keys.clone(),
         );
     }
     finish_collections(groups, CollectionKind::Album)
@@ -555,17 +620,27 @@ fn cover_url_at(cover_urls: &[String], index: usize) -> String {
     cover_urls.get(index).cloned().unwrap_or_default()
 }
 
+struct GroupedTrack {
+    track: Arc<TrackMetadata>,
+    cover: String,
+    keys: TrackCollationKeys,
+}
+
 fn push_grouped_track(
-    groups: &mut HashMap<String, Vec<(Arc<TrackMetadata>, String)>>,
+    groups: &mut HashMap<String, Vec<GroupedTrack>>,
     name: String,
     track: Arc<TrackMetadata>,
     cover: String,
+    keys: TrackCollationKeys,
 ) {
-    groups.entry(name).or_default().push((track, cover));
+    groups
+        .entry(name)
+        .or_default()
+        .push(GroupedTrack { track, cover, keys });
 }
 
 fn finish_collections(
-    groups: HashMap<String, Vec<(Arc<TrackMetadata>, String)>>,
+    groups: HashMap<String, Vec<GroupedTrack>>,
     kind: CollectionKind,
 ) -> Vec<CollectionEntry> {
     let mut groups = groups
@@ -581,14 +656,15 @@ fn finish_collections(
     groups
         .into_iter()
         .map(|(name, _, mut tracks)| {
-            tracks.sort_by(|(left, _), (right, _)| compare_grouped_tracks(left, right, kind));
+            tracks.sort_by(|left, right| compare_grouped_tracks(left, right, kind));
             let cover_url = tracks
                 .iter()
-                .find_map(|(_, cover)| (!cover.is_empty()).then(|| cover.clone()))
+                .find_map(|item| (!item.cover.is_empty()).then(|| item.cover.clone()))
                 .unwrap_or_default();
             let subtitle = collection_subtitle(&name, &tracks, kind);
             let track_count = tracks.len();
-            let (tracks, cover_urls) = tracks.into_iter().unzip();
+            let cover_urls = tracks.iter().map(|item| item.cover.clone()).collect();
+            let tracks = tracks.into_iter().map(|item| item.track).collect();
             CollectionEntry {
                 name,
                 subtitle,
@@ -601,11 +677,7 @@ fn finish_collections(
         .collect()
 }
 
-fn collection_subtitle(
-    name: &str,
-    tracks: &[(Arc<TrackMetadata>, String)],
-    kind: CollectionKind,
-) -> String {
+fn collection_subtitle(name: &str, tracks: &[GroupedTrack], kind: CollectionKind) -> String {
     match kind {
         CollectionKind::Artist => format_count(tracks.len(), "首歌曲"),
         CollectionKind::Album => {
@@ -623,11 +695,11 @@ fn collection_subtitle(
     }
 }
 
-fn unique_artists(tracks: &[(Arc<TrackMetadata>, String)]) -> Vec<String> {
+fn unique_artists(tracks: &[GroupedTrack]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut artists = Vec::new();
-    for (track, _) in tracks {
-        for artist in &track.artists {
+    for item in tracks {
+        for artist in &item.track.artists {
             if artist.is_empty() || !seen.insert(artist.as_str()) {
                 continue;
             }
@@ -650,28 +722,24 @@ fn compare_collection_name(left: &str, left_key: &str, right: &str, right_key: &
     }
 }
 
-fn collection_name_key(
-    name: &str,
-    tracks: &[(Arc<TrackMetadata>, String)],
-    kind: CollectionKind,
-) -> String {
+fn collection_name_key(name: &str, tracks: &[GroupedTrack], kind: CollectionKind) -> String {
     sort_key(name, collection_sort_tag(name, tracks, kind))
 }
 
 fn collection_sort_tag<'a>(
     name: &str,
-    tracks: &'a [(Arc<TrackMetadata>, String)],
+    tracks: &'a [GroupedTrack],
     kind: CollectionKind,
 ) -> Option<&'a str> {
-    tracks.iter().find_map(|(track, _)| match kind {
+    tracks.iter().find_map(|item| match kind {
         CollectionKind::Artist
-            if track.artists.len() == 1
-                && track.artists.first().map(String::as_str) == Some(name) =>
+            if item.track.artists.len() == 1
+                && item.track.artists.first().map(String::as_str) == Some(name) =>
         {
-            nonempty_sort_tag(track.artist_sort.as_deref())
+            nonempty_sort_tag(item.track.artist_sort.as_deref())
         }
-        CollectionKind::Album if track.album.as_deref() == Some(name) => {
-            nonempty_sort_tag(track.album_sort.as_deref())
+        CollectionKind::Album if item.track.album.as_deref() == Some(name) => {
+            nonempty_sort_tag(item.track.album_sort.as_deref())
         }
         _ => None,
     })
@@ -686,17 +754,16 @@ fn is_unknown_collection(name: &str) -> bool {
 }
 
 fn compare_grouped_tracks(
-    left: &TrackMetadata,
-    right: &TrackMetadata,
+    left: &GroupedTrack,
+    right: &GroupedTrack,
     kind: CollectionKind,
 ) -> Ordering {
     match kind {
-        CollectionKind::Artist => compare_keys(&left.album_key, &right.album_key)
-            .then_with(|| compare_keys(&left.title_key, &right.title_key))
-            .then_with(|| left.path.cmp(&right.path)),
-        CollectionKind::Album => {
-            compare_keys(&left.title_key, &right.title_key).then_with(|| left.path.cmp(&right.path))
-        }
+        CollectionKind::Artist => compare_keys(&left.keys.album, &right.keys.album)
+            .then_with(|| compare_keys(&left.keys.title, &right.keys.title))
+            .then_with(|| left.track.path.cmp(&right.track.path)),
+        CollectionKind::Album => compare_keys(&left.keys.title, &right.keys.title)
+            .then_with(|| left.track.path.cmp(&right.track.path)),
     }
 }
 
@@ -715,7 +782,7 @@ mod tests {
 
     #[test]
     fn aggregates_artists_and_albums_from_library_tracks() {
-        let tracks = vec![
+        let tracks = snapshots(vec![
             test_track(
                 "夜色",
                 Some("清音"),
@@ -724,7 +791,7 @@ mod tests {
             ),
             test_track("晨光", Some("清音"), vec!["甲歌手"], "/music/morning.flac"),
             test_track("无题", None, Vec::new(), "/music/untitled.flac"),
-        ];
+        ]);
         let covers = vec![
             "night-cover".to_owned(),
             "morning-cover".to_owned(),
@@ -758,20 +825,19 @@ mod tests {
     fn artist_sort_tags_reorder_collection_names() {
         let mut jay = test_track("晴天", Some("叶惠美"), vec!["周杰伦"], "/music/jay.flac");
         jay.artist_sort = Some("Aaa".into());
-        jay.refresh_sort_keys();
         let li = test_track("麻雀", Some("麻雀"), vec!["李荣浩"], "/music/li.flac");
-        let artists = aggregate_artists(&[jay, li], &["a".into(), "b".into()]);
+        let artists = aggregate_artists(&snapshots(vec![jay, li]), &["a".into(), "b".into()]);
         assert_eq!(artists[0].name, "周杰伦");
         assert_eq!(artists[1].name, "李荣浩");
     }
 
     #[test]
     fn artist_collections_interleave_han_and_latin_names() {
-        let tracks = vec![
+        let tracks = snapshots(vec![
             test_track("晴天", None, vec!["周杰伦"], "/music/jay.flac"),
             test_track("Hello", None, vec!["Adele"], "/music/adele.flac"),
             test_track("听海", None, vec!["阿妹"], "/music/amei.flac"),
-        ];
+        ]);
         let covers = vec![String::new(); 3];
         let artists = aggregate_artists(&tracks, &covers);
         assert_eq!(
@@ -785,12 +851,12 @@ mod tests {
 
     #[test]
     fn multi_artist_tracks_share_one_metadata_allocation() {
-        let tracks = vec![test_track(
+        let tracks = snapshots(vec![test_track(
             "夜色",
             Some("清音"),
             vec!["乙歌手", "甲歌手"],
             "/music/night.flac",
-        )];
+        )]);
         let covers = vec!["night-cover".to_owned()];
         let artists = aggregate_artists(&tracks, &covers);
         assert_eq!(artists.len(), 2);
@@ -982,6 +1048,24 @@ mod tests {
 
         let _ = fs::remove_file(&outside);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snapshot_keys_use_tags_and_pinyin() {
+        let mut track = test_track("周杰伦", Some("叶惠美"), vec!["周杰伦"], "/music/a.flac");
+        track.title_sort = Some("Jay Chou".into());
+        track.artist_sort = Some("Jay Chou".into());
+        let snapshot = TrackSnapshot::from_metadata(track);
+        assert_eq!(snapshot.keys.title, "Jay Chou");
+        assert_eq!(snapshot.keys.artist, "Jay Chou");
+        assert_eq!(snapshot.keys.album.to_lowercase(), "yehuimei");
+    }
+
+    fn snapshots(tracks: Vec<TrackMetadata>) -> Vec<TrackSnapshot> {
+        tracks
+            .into_iter()
+            .map(TrackSnapshot::from_metadata)
+            .collect()
     }
 
     fn test_track(

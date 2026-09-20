@@ -26,7 +26,7 @@
 ### 核心与数据模型
 
 - [`TrackMetadata`](../crates/metadata/src/lib.rs) 已定义路径、标题、专辑、歌手、时长和可选排序标签，
-  并支持 serde 序列化与反序列化。排序键在读取或从 SQLite 加载时计算一次。
+  并支持 serde 序列化与反序列化。校对键不在该 DTO 上；装入 [`TrackSnapshot`](../crates/library/src/lib.rs) 时计算一次。
 - [`Settings`](../crates/core/src/lib.rs) 已定义音乐目录、主题、音量和排序，并支持 TOML 读写。
 
 ### 中文搜索与排序
@@ -81,7 +81,7 @@
 
 - [`AppBridge`](../crates/ui_bridge/src/lib.rs) 已注册为 `Qingyin 1.0/AppBridge`。
 - QML 可调用 `application_name()` 和 `version()`。
-- [`LibrarySession`](../crates/ui_bridge/src/library_session.rs) 承接扫描、搜索、监听与歌手/专辑模型；工作线程回调回到该对象而不是 `AppBridge`。扫描/搜索失败以 `thiserror` 枚举回传，界面显示中文文案。
+- [`LibrarySession`](../crates/ui_bridge/src/library_session.rs) 承接扫描、搜索、监听与歌手/专辑模型；工作线程回调回到该对象而不是 `AppBridge`。扫描/搜索失败以 `thiserror` 枚举回传，界面显示中文文案。从 SQLite 装入曲库时生成 `TrackSnapshot` 校对键，`metadata` 不再依赖 `chinese`。
 - 曲库表绑定独立的 `TrackListModel`（标题、歌手、专辑、时长、路径、封面），与会话对象分开；详情列表共用同一套角色映射。
 - [`PlaybackController`](../crates/ui_bridge/src/playback.rs) 承接 load/play/EOS/进度/音量；[`PlayerBar.qml`](../qml/PlayerBar.qml) 绑定 `backend.playback`。
 - 文件夹扫描在工作线程执行，并通过 Qt queued callback 在主线程重置曲库模型。

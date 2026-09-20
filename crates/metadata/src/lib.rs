@@ -4,7 +4,6 @@ use std::time::Duration;
 use lofty::file::{AudioFile, TaggedFile, TaggedFileExt};
 use lofty::picture::MimeType;
 use lofty::tag::{Accessor, ItemKey, Tag};
-use qingyin_chinese::sort_key;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -21,14 +20,11 @@ pub struct TrackMetadata {
     pub artist_sort: Option<String>,
     /// Filesystem mtime in unix seconds when known; `0` if not yet recorded.
     pub modified_at: i64,
-    /// Precomputed collation keys from display names and optional sort tags.
-    pub title_key: String,
-    pub album_key: String,
-    pub artist_key: String,
 }
 
 impl TrackMetadata {
-    /// Builds metadata and computes collation keys from display names.
+    /// Builds tag fields from display names. Collation keys are computed later
+    /// when the track is loaded into a UI snapshot.
     #[must_use]
     pub fn from_display(
         path: impl Into<PathBuf>,
@@ -37,7 +33,7 @@ impl TrackMetadata {
         artists: Vec<String>,
         duration: Option<Duration>,
     ) -> Self {
-        let mut track = Self {
+        Self {
             path: path.into(),
             title: title.into(),
             album,
@@ -47,25 +43,7 @@ impl TrackMetadata {
             album_sort: None,
             artist_sort: None,
             modified_at: 0,
-            title_key: String::new(),
-            album_key: String::new(),
-            artist_key: String::new(),
-        };
-        track.refresh_sort_keys();
-        track
-    }
-
-    /// Rebuilds collation keys from display names and optional sort tags.
-    pub fn refresh_sort_keys(&mut self) {
-        self.title_key = sort_key(&self.title, self.title_sort.as_deref());
-        self.album_key = sort_key(
-            self.album.as_deref().unwrap_or(""),
-            self.album_sort.as_deref(),
-        );
-        self.artist_key = sort_key(
-            self.artists.first().map_or("", String::as_str),
-            self.artist_sort.as_deref(),
-        );
+        }
     }
 }
 
@@ -137,7 +115,7 @@ fn parse_tagged_file(path: &Path, tagged_file: &TaggedFile) -> (TrackMetadata, O
         .filter(|value| !value.trim().is_empty())
         .map_or_else(Vec::new, |value| vec![value.trim().to_owned()]);
     let duration = tagged_file.properties().duration();
-    let mut track = TrackMetadata {
+    let track = TrackMetadata {
         path: path.to_path_buf(),
         title,
         album,
@@ -147,11 +125,7 @@ fn parse_tagged_file(path: &Path, tagged_file: &TaggedFile) -> (TrackMetadata, O
         album_sort: sort_tag(tag, ItemKey::AlbumTitleSortOrder),
         artist_sort: sort_tag(tag, ItemKey::TrackArtistSortOrder),
         modified_at: 0,
-        title_key: String::new(),
-        album_key: String::new(),
-        artist_key: String::new(),
     };
-    track.refresh_sort_keys();
     (track, first_cover(tagged_file))
 }
 
@@ -203,25 +177,18 @@ mod tests {
     }
 
     #[test]
-    fn refresh_sort_keys_uses_tags_and_pinyin() {
-        let mut track = TrackMetadata {
-            path: "/music/a.flac".into(),
-            title: "周杰伦".into(),
-            album: Some("叶惠美".into()),
-            artists: vec!["周杰伦".into()],
-            duration: None,
-            title_sort: Some("Jay Chou".into()),
-            album_sort: None,
-            artist_sort: Some("Jay Chou".into()),
-            modified_at: 0,
-            title_key: String::new(),
-            album_key: String::new(),
-            artist_key: String::new(),
-        };
-        track.refresh_sort_keys();
-        assert_eq!(track.title_key, "Jay Chou");
-        assert_eq!(track.artist_key, "Jay Chou");
-        assert_eq!(track.album_key.to_lowercase(), "yehuimei");
+    fn from_display_keeps_sort_tags_empty() {
+        let track = TrackMetadata::from_display(
+            "/music/a.flac",
+            "周杰伦",
+            Some("叶惠美".into()),
+            vec!["周杰伦".into()],
+            None,
+        );
+        assert_eq!(track.title, "周杰伦");
+        assert!(track.title_sort.is_none());
+        assert!(track.album_sort.is_none());
+        assert!(track.artist_sort.is_none());
     }
 
     #[test]

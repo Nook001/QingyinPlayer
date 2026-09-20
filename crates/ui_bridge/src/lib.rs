@@ -8,12 +8,11 @@ use collections::TrackListModel;
 use cstr::cstr;
 use library_session::LibrarySession;
 use playback::PlaybackController;
-use qingyin_chinese::compare_keys;
 use qingyin_core::Settings;
+use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -265,7 +264,7 @@ fn format_music_folders(directories: &[PathBuf]) -> String {
 }
 
 pub(crate) fn sort_tracks(
-    tracks: &mut Vec<TrackMetadata>,
+    tracks: &mut Vec<TrackSnapshot>,
     cover_urls: &mut Vec<String>,
     column: &str,
     ascending: bool,
@@ -277,7 +276,7 @@ pub(crate) fn sort_tracks(
         .zip(std::mem::take(cover_urls))
         .collect::<Vec<_>>();
     rows.sort_by(|(left, _), (right, _)| {
-        let ordering = compare_tracks(left, right, column).then_with(|| left.path.cmp(&right.path));
+        let ordering = left.cmp_column(right, column);
         if ascending {
             ordering
         } else {
@@ -287,14 +286,6 @@ pub(crate) fn sort_tracks(
     let (sorted_tracks, sorted_covers) = rows.into_iter().unzip();
     *tracks = sorted_tracks;
     *cover_urls = sorted_covers;
-}
-
-fn compare_tracks(left: &TrackMetadata, right: &TrackMetadata, column: &str) -> Ordering {
-    match column {
-        "album" => compare_keys(&left.album_key, &right.album_key),
-        "duration" => left.duration.cmp(&right.duration),
-        _ => compare_keys(&left.title_key, &right.title_key),
-    }
 }
 
 pub(crate) const fn previous_track_index(current: usize) -> usize {
@@ -338,13 +329,13 @@ mod tests {
         let mut covers = vec!["B封面".to_owned(), "A封面".to_owned()];
 
         sort_tracks(&mut tracks, &mut covers, "title", true);
-        assert_eq!(tracks[0].title, "A");
-        assert_eq!(tracks[1].title, "B");
+        assert_eq!(tracks[0].metadata.title, "A");
+        assert_eq!(tracks[1].metadata.title, "B");
         assert_eq!(covers, ["A封面", "B封面"]);
 
         sort_tracks(&mut tracks, &mut covers, "duration", false);
-        assert_eq!(tracks[0].duration, Some(Duration::from_secs(20)));
-        assert_eq!(tracks[1].duration, Some(Duration::from_secs(10)));
+        assert_eq!(tracks[0].metadata.duration, Some(Duration::from_secs(20)));
+        assert_eq!(tracks[1].metadata.duration, Some(Duration::from_secs(10)));
         assert_eq!(covers, ["B封面", "A封面"]);
     }
 
@@ -360,7 +351,7 @@ mod tests {
         assert_eq!(
             tracks
                 .iter()
-                .map(|track| track.title.as_str())
+                .map(|track| track.metadata.title.as_str())
                 .collect::<Vec<_>>(),
             ["Adele", "阿妹", "周杰伦"]
         );
@@ -372,13 +363,13 @@ mod tests {
         assert_eq!(folders, "/music/a\n/music/b");
     }
 
-    fn test_track(title: &str, album: &str, duration: u64) -> TrackMetadata {
-        TrackMetadata::from_display(
+    fn test_track(title: &str, album: &str, duration: u64) -> TrackSnapshot {
+        TrackSnapshot::from_metadata(TrackMetadata::from_display(
             format!("/music/{title}.flac"),
             title,
             Some(album.to_owned()),
             Vec::new(),
             Some(Duration::from_secs(duration)),
-        )
+        ))
     }
 }
