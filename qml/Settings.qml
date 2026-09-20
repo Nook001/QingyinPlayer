@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
@@ -40,41 +41,57 @@ Item {
             Layout.fillWidth: true
             spacing: 8
 
-            TapControl {
+            Button {
                 id: lightThemeButton
                 objectName: "lightThemeButton"
 
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36
-                radius: 6
-                restFill: !root.darkMode ? root.theme.subtleColor : "transparent"
-                hoverFill: root.theme.hoverColor
-                onTapped: root.themeRequested(false)
+                flat: true
+                hoverEnabled: true
+                text: "浅色"
+                onClicked: root.themeRequested(false)
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "浅色"
+                contentItem: Text {
+                    text: lightThemeButton.text
                     color: root.theme.textColor
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                     font.pixelSize: 14
+                }
+
+                background: Rectangle {
+                    radius: 6
+                    color: lightThemeButton.down || lightThemeButton.hovered
+                        ? root.theme.hoverColor
+                        : (!root.darkMode ? root.theme.subtleColor : "transparent")
                 }
             }
 
-            TapControl {
+            Button {
                 id: darkThemeButton
                 objectName: "darkThemeButton"
 
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36
-                radius: 6
-                restFill: root.darkMode ? root.theme.subtleColor : "transparent"
-                hoverFill: root.theme.hoverColor
-                onTapped: root.themeRequested(true)
+                flat: true
+                hoverEnabled: true
+                text: "深色"
+                onClicked: root.themeRequested(true)
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "深色"
+                contentItem: Text {
+                    text: darkThemeButton.text
                     color: root.theme.textColor
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                     font.pixelSize: 14
+                }
+
+                background: Rectangle {
+                    radius: 6
+                    color: darkThemeButton.down || darkThemeButton.hovered
+                        ? root.theme.hoverColor
+                        : (root.darkMode ? root.theme.subtleColor : "transparent")
                 }
             }
         }

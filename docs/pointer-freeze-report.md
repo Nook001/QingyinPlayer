@@ -154,3 +154,17 @@ grabber-later  idle mouse=none
 清锁在跑，但 `mouseGrabberItem` 和 exclusive grabber 都是空的，也从未出现 `qt-grab 16`。应用层 `ungrabMouse()` 是空操作。事件之后不再进入窗口，更像是 Qt 仍认为按键没松开，或 Wayland 合成器不再把指针事件交给这个表面。这两处都没有稳妥的应用层修法，继续换 QML handler 也打不到。
 
 还没关：曲库搜索框仍是 `TextField`。此项暂时搁置。
+
+## 后续：改走 Elisa 输入模型
+
+应用层补松开、以及 C++ `ungrabMouse()`，都没能让 Hyprland 上的指针恢复。曾改成系统标题栏、`QQC2.Button` / `Slider` / `ItemDelegate`、可交互列表、按页 `Loader`。`pointer_guard` 仍留在树里但播放路径不再调用。
+
+Elisa 输入模型和后续的 cutoff 实验（切歌后延迟改标题/封面、串行 `playbin`）仍然会在 `play_next` 之后整窗无指针事件；音频和进度继续。系统标题栏（客户端绘制）也无法关闭窗口，只能 `kill -9`。说明问题不在自管 grab，而在 Qt Quick 投递/Wayland 表面这一层。
+
+## 当前：Qt Widgets 壳（已撤回）
+
+QML 输入路径曾停用，改成 `QApplication` + `QMainWindow` + `QListView`。Hyprland 上 **同样** 在 `slot play_track` / `play_next` 之后指针事件断掉，进程停在 `do_sys_poll`，音频仍在播。系统装饰也无法可靠关闭。Widgets 没有消除假死，却把 UX 降到不可用。
+
+这说明根因不在 Qt Quick 独占抓取这一层独有，而在 **QML 与 Widgets 共用的路径**：Qt 主线程上对 `playbin` 做 `set_state(Null/Playing)`，同时 GLib 线程还在查进度、收 Bus。两边并发碰同一个 element，Wayland 上表现为输入表面丢失。
+
+已改回 QML 壳；`playbin` 的 load/play/pause/seek 改为排队到既有 GLib 播放线程。请再试双击播放和「下一首」。

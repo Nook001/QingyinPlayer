@@ -1,4 +1,7 @@
 //! Recover leftover Qt Quick pointer grabs after Wayland drops a release.
+//!
+//! The Elisa-style QML input model does not call this module. Keep the
+//! sources until Hyprland interaction is confirmed stable, then delete.
 
 use std::os::raw::c_char;
 

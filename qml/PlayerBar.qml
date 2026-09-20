@@ -1,37 +1,22 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
     id: root
 
     required property var theme
-    required property real cornerRadius
     required property var playerBackend
 
     color: root.theme.surfaceColor
-    radius: root.cornerRadius
 
     function formatTime(milliseconds) {
         const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
         const minutes = Math.floor(totalSeconds / 60)
         const seconds = totalSeconds % 60
         return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
-    }
-
-    Rectangle {
-        anchors.left: parent.left
-        width: root.cornerRadius
-        height: parent.height
-        color: parent.color
-    }
-
-    Rectangle {
-        anchors.top: parent.top
-        width: parent.width
-        height: root.cornerRadius
-        color: parent.color
     }
 
     Rectangle {
@@ -110,36 +95,88 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 8
 
-            PlaybackButton {
+            Button {
+                id: playPreviousButton
                 objectName: "playPreviousButton"
-                text: "◀|"
-                tooltip: "上一首"
-                actionEnabled: root.playerBackend.current_title !== ""
-                textColor: root.theme.textColor
-                onTapped: root.playerBackend.play_previous()
+
+                implicitWidth: 44
+                implicitHeight: 40
+                flat: true
+                hoverEnabled: true
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: "上一首"
+                onClicked: Qt.callLater(function() { root.playerBackend.play_previous() })
+
+                contentItem: Text {
+                    text: "◀|"
+                    color: root.theme.textColor
+                    opacity: playPreviousButton.enabled ? 1 : 0.35
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 16
+                }
+
+                background: Rectangle {
+                    color: playPreviousButton.hovered && playPreviousButton.enabled
+                        ? root.theme.hoverColor : "transparent"
+                    radius: 4
+                }
             }
 
-            PlaybackButton {
+            Button {
+                id: togglePlaybackButton
                 objectName: "togglePlaybackButton"
-                width: 46
-                height: 46
+
                 implicitWidth: 46
                 implicitHeight: 46
-                text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
-                tooltip: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
-                actionEnabled: root.playerBackend.current_title !== ""
-                textColor: root.theme.textColor
-                pixelSize: 18
-                onTapped: root.playerBackend.toggle_playback()
+                flat: true
+                hoverEnabled: true
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: root.playerBackend.playback_state === "playing" ? "暂停" : "播放"
+                onClicked: Qt.callLater(function() { root.playerBackend.toggle_playback() })
+
+                contentItem: Text {
+                    text: root.playerBackend.playback_state === "playing" ? "Ⅱ" : "▶"
+                    color: root.theme.textColor
+                    opacity: togglePlaybackButton.enabled ? 1 : 0.35
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 18
+                }
+
+                background: Rectangle {
+                    color: togglePlaybackButton.hovered && togglePlaybackButton.enabled
+                        ? root.theme.hoverColor : "transparent"
+                    radius: 4
+                }
             }
 
-            PlaybackButton {
+            Button {
+                id: playNextButton
                 objectName: "playNextButton"
-                text: "|▶"
-                tooltip: "下一首"
-                actionEnabled: root.playerBackend.current_title !== ""
-                textColor: root.theme.textColor
-                onTapped: root.playerBackend.play_next()
+
+                implicitWidth: 44
+                implicitHeight: 40
+                flat: true
+                hoverEnabled: true
+                enabled: root.playerBackend.current_title !== ""
+                Accessible.name: "下一首"
+                onClicked: Qt.callLater(function() { root.playerBackend.play_next() })
+
+                contentItem: Text {
+                    text: "|▶"
+                    color: root.theme.textColor
+                    opacity: playNextButton.enabled ? 1 : 0.35
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.pixelSize: 16
+                }
+
+                background: Rectangle {
+                    color: playNextButton.hovered && playNextButton.enabled
+                        ? root.theme.hoverColor : "transparent"
+                    radius: 4
+                }
             }
         }
 
@@ -149,28 +186,62 @@ Rectangle {
 
             Text {
                 Layout.preferredWidth: 38
-                text: root.formatTime(progressSlider.dragging
-                    ? progressSlider.dragValue
+                text: root.formatTime(progressSlider.pressed
+                    ? progressSlider.value
                     : root.playerBackend.playback_position)
                 color: root.theme.mutedTextColor
                 horizontalAlignment: Text.AlignRight
                 font.pixelSize: 11
             }
 
-            PointerSlider {
+            Slider {
                 id: progressSlider
                 objectName: "progressSlider"
 
                 Layout.fillWidth: true
                 from: 0
                 to: Math.max(1, root.playerBackend.playback_duration)
-                value: root.playerBackend.playback_position
-                inputEnabled: root.playerBackend.current_title !== ""
+                enabled: root.playerBackend.current_title !== ""
                     && root.playerBackend.playback_duration > 0
-                trackColor: root.theme.dividerColor
-                fillColor: root.theme.accentColor
-                onCommitted: function(v) {
-                    root.playerBackend.seek_to(Math.round(v))
+                onPressedChanged: if (!pressed && enabled) {
+                    const position = Math.round(value)
+                    Qt.callLater(function() { root.playerBackend.seek_to(position) })
+                }
+
+                Binding {
+                    target: progressSlider
+                    property: "value"
+                    value: root.playerBackend.playback_position
+                    when: !progressSlider.pressed
+                    restoreMode: Binding.RestoreNone
+                }
+
+                background: Rectangle {
+                    x: progressSlider.leftPadding
+                    y: progressSlider.topPadding + (progressSlider.availableHeight - height) / 2
+                    implicitHeight: 4
+                    width: progressSlider.availableWidth
+                    height: 4
+                    radius: 2
+                    color: root.theme.dividerColor
+
+                    Rectangle {
+                        width: progressSlider.visualPosition * parent.width
+                        height: parent.height
+                        radius: 2
+                        color: root.theme.accentColor
+                    }
+                }
+
+                handle: Rectangle {
+                    x: progressSlider.leftPadding + progressSlider.visualPosition
+                        * (progressSlider.availableWidth - width)
+                    y: progressSlider.topPadding + (progressSlider.availableHeight - height) / 2
+                    implicitWidth: 10
+                    implicitHeight: 10
+                    radius: 5
+                    visible: progressSlider.enabled
+                    color: root.theme.accentColor
                 }
             }
 
@@ -196,17 +267,44 @@ Rectangle {
             font.pixelSize: 15
         }
 
-        PointerSlider {
+        Slider {
+            id: volumeSlider
             objectName: "volumeSlider"
+
             Layout.fillWidth: true
             from: 0
             to: 1
+            enabled: root.playerBackend.current_title !== ""
             value: root.playerBackend.player_volume
-            inputEnabled: root.playerBackend.current_title !== ""
-            trackColor: root.theme.dividerColor
-            fillColor: root.theme.accentColor
-            onDragged: function(v) { root.playerBackend.set_player_volume(v) }
-            onCommitted: function(v) { root.playerBackend.set_player_volume(v) }
+            onMoved: root.playerBackend.set_player_volume(value)
+
+            background: Rectangle {
+                x: volumeSlider.leftPadding
+                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
+                implicitHeight: 4
+                width: volumeSlider.availableWidth
+                height: 4
+                radius: 2
+                color: root.theme.dividerColor
+
+                Rectangle {
+                    width: volumeSlider.visualPosition * parent.width
+                    height: parent.height
+                    radius: 2
+                    color: root.theme.accentColor
+                }
+            }
+
+            handle: Rectangle {
+                x: volumeSlider.leftPadding + volumeSlider.visualPosition
+                    * (volumeSlider.availableWidth - width)
+                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
+                implicitWidth: 10
+                implicitHeight: 10
+                radius: 5
+                visible: volumeSlider.enabled
+                color: root.theme.accentColor
+            }
         }
     }
 }

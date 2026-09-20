@@ -64,26 +64,30 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            TapControl {
+            Button {
                 id: addFolderButton
                 objectName: "addFolderButton"
 
-                implicitWidth: 112
-                implicitHeight: 38
                 Layout.preferredWidth: 112
                 Layout.preferredHeight: 38
-                radius: 6
-                restFill: root.theme.accentColor
-                hoverFill: root.theme.accentColor
-                pressFill: root.theme.accentPressedColor
-                onTapped: folderDialog.open()
+                flat: true
+                hoverEnabled: true
+                text: "添加文件夹"
+                onClicked: folderDialog.open()
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "添加文件夹"
+                contentItem: Text {
+                    text: addFolderButton.text
                     color: "#FFFFFF"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
+                }
+
+                background: Rectangle {
+                    radius: 6
+                    color: addFolderButton.down
+                        ? root.theme.accentPressedColor : root.theme.accentColor
                 }
             }
         }
@@ -137,8 +141,6 @@ Item {
             theme: root.theme
             trackModel: root.libraryModel
             visible: count > 0 && !root.waitingForSearch
-            debugLabel: "library"
-            handlersEnabled: root.enabled && visible
             onTrackActivated: function(row) { root.libraryModel.play_track(row) }
         }
 

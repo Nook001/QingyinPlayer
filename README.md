@@ -8,8 +8,8 @@
 | --- | --- |
 | 领域逻辑 | Rust 2024（workspace，`rust-version` 1.92） |
 | 界面 | Qt 6 Quick / QML |
-| Rust ↔ QML | `qmetaobject`（不经过手写 C++ 或 CXX-Qt） |
-| 播放 | GStreamer `playbin` → PipeWire |
+| Rust ↔ QML | `qmetaobject` |
+| 播放 | GStreamer `playbin`（状态切换在独立 GLib 线程）→ PipeWire |
 | 元数据 | Lofty |
 | 曲库存储 | SQLite（`rusqlite`，bundled） |
 | 中文 | `pinyin` 搜索键 + ICU4X collator 排序 |
@@ -39,7 +39,7 @@ cargo run -p qingyin-ui-bridge
 QINGYIN_POINTER_DEBUG=1 cargo run -p qingyin-ui-bridge
 ```
 
-终端和 `/tmp/qingyin-pointer.log` 会记下按钮按下/松开/点击，以及列表滚动和 `play_next` 等槽调用。不要在滚动过程中改 QML 树。若你点了「下一首」但日志没有 `clicked playNextButton` / `slot play_next`，事件没有到达 QML。
+终端和 `/tmp/qingyin-pointer.log` 会记下按钮按下/松开/点击，以及 `play_next` 等槽调用。若点了「下一首」但没有 `slot play_next`，事件没有到达 `AppBridge`。
 
 ## 仓库结构
 
@@ -70,7 +70,7 @@ qingyin/
 ┌──────────────────────────────────────────┐
 │              Qt Quick / QML              │
 │  Library / Artist / Album / TrackTable   │
-│  PlayerBar / Settings / WindowControls   │
+│  PlayerBar / Settings / QQC2 Controls    │
 └────────────────────┬─────────────────────┘
                      │ 属性 / 信号 / 方法
                      ▼
@@ -101,7 +101,6 @@ flowchart BT
   player[player]
   core[core]
   ui_bridge[ui_bridge]
-  qml[QML]
 
   metadata --> chinese
   storage --> chinese
@@ -118,7 +117,6 @@ flowchart BT
   ui_bridge --> metadata
   ui_bridge --> player
   ui_bridge --> storage
-  qml --> ui_bridge
 ```
 
 | Crate | 职责 | 依赖的本仓库 crate |
@@ -139,7 +137,7 @@ flowchart BT
 
 ### 启动
 
-1. `qingyin-ui-bridge` 初始化 `tracing`，注册 `Qingyin.AppBridge`，加载源码树中的 `qml/Main.qml`（尚未嵌入二进制）。
+1. `qingyin-ui-bridge` 初始化 `tracing`，注册 `Qingyin.AppBridge`，加载源码树中的 `qml/Main.qml`。
 2. `Main.qml` 的 `Component.onCompleted` 调用 `restore_session()`。
 3. 主线程读取 `~/.config/qingyin/settings.toml`（缺失则用默认值），恢复主题、音量、排序列、音乐目录。
 4. 主线程打开 `~/.local/share/qingyin/library.sqlite3`，`list_tracks` 填入内存模型，并为每首曲目准备封面 URL。
@@ -148,7 +146,7 @@ flowchart BT
 ### 导入 / 全量扫描
 
 ```
-QML 选择文件夹
+界面选择文件夹
   → 工作线程 scan_directory
       → 递归收集音频扩展名
       → 与 SQLite 中 modified_at 比较，未变化则跳过
@@ -182,7 +180,7 @@ inotify 事件
 ### 播放
 
 ```
-QML 激活某一行
+列表双击某一行
   → AppBridge 复制当前列表为 playback_tracks（与曲库筛选/排序解耦）
   → 主线程 Player::load + play（playbin，URI 为本地文件，不等待 preroll）
   → Playing 时由播放器推送 position
@@ -198,7 +196,7 @@ QML 激活某一行
 - 使用单一 `playbin`。若系统没有 `autoaudiosink`，尝试 `pipewiresink`。
 - `load` 校验普通文件、canonicalize、按扩展名检查 FLAC/MP3 相关插件，再把路径变成 URI。
 - `play` / `pause` 发出状态请求后立即返回，不等待 pipeline preroll；后续失败经 Bus 回传。
-- Bus watch 挂在独立 `GLib` 主循环上；仅在 `Playing` 时推送进度，QML 不再轮询。
+- Bus watch 挂在独立 `GLib` 主循环上；`load` / `play` / `pause` / `seek` 也排队到这条线程，避免和 Qt 主线程同时碰 `playbin`。仅在 `Playing` 时推送进度。
 - 析构时将 pipeline 置 `Null`，并停止 Bus 线程。
 
 播放会话状态（当前行、标题、封面 URL、错误文案）由 `AppBridge` 持有，不在 `Player` 内。

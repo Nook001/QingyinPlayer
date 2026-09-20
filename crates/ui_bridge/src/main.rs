@@ -7,6 +7,12 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    // Union 风格的 Slider 会和我们的绑定打架；Basic 避开这个问题。
+    // SAFETY: Qt 尚未创建线程或 QApplication。
+    unsafe {
+        std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
+    }
+
     qingyin_ui_bridge::register_qml_types();
 
     let mut engine = QmlEngine::new();

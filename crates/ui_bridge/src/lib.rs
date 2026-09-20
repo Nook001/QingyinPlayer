@@ -1,4 +1,5 @@
 mod collections;
+#[allow(dead_code)]
 mod pointer_guard;
 
 use collections::{CollectionModel, DetailTrackModel};
@@ -53,6 +54,15 @@ struct SearchResult {
     tracks: Vec<TrackMetadata>,
 }
 
+#[derive(Debug)]
+struct PendingPlaybackUi {
+    generation: u64,
+    title: String,
+    artist: String,
+    cover: String,
+    duration: i64,
+}
+
 #[allow(missing_debug_implementations, clippy::struct_excessive_bools)]
 #[derive(QObject, Default)]
 pub struct AppBridge {
@@ -98,6 +108,10 @@ pub struct AppBridge {
     scan_status_changed: qt_signal!(),
     player: Option<Player>,
     current_index: Option<usize>,
+    /// True while a `playbin` load/play is in flight; extra next/prev wait.
+    play_in_flight: bool,
+    queued_play_row: Option<i32>,
+    playback_ui_generation: u64,
     playback_state: qt_property!(QString; NOTIFY playback_changed),
     current_title: qt_property!(QString; NOTIFY playback_changed),
     current_artist: qt_property!(QString; NOTIFY playback_changed),
@@ -138,7 +152,6 @@ pub struct AppBridge {
     drop_pointer_grabs: qt_method!(
         fn drop_pointer_grabs(&self) {
             let _ = self;
-            pointer_guard::drop_after_gesture();
         }
     ),
     add_library_folder: qt_method!(
@@ -338,6 +351,14 @@ impl AppBridge {
     }
 
     fn play_queue_row(&mut self, row: i32) {
+        if self.play_in_flight {
+            self.queued_play_row = Some(row);
+            return;
+        }
+        self.start_queue_row(row);
+    }
+
+    fn start_queue_row(&mut self, row: i32) {
         let Some((row, track)) = usize::try_from(row).ok().and_then(|row| {
             self.playback_tracks
                 .get(row)
@@ -353,27 +374,53 @@ impl AppBridge {
         let Some(player) = self.player.as_mut() else {
             return;
         };
+        self.play_in_flight = true;
         if let Err(error) = player.load(&track.path).and_then(|()| player.play()) {
+            self.play_in_flight = false;
             self.set_playback_error(error.to_string());
             return;
         }
 
         self.current_index = Some(row);
-        self.current_title = track.title.into();
-        self.current_artist = track.artists.join("、").into();
-        self.current_cover = self
-            .playback_cover_urls
-            .get(row)
-            .cloned()
-            .unwrap_or_default()
-            .into();
+        self.playback_ui_generation = self.playback_ui_generation.wrapping_add(1);
+        let pending = PendingPlaybackUi {
+            generation: self.playback_ui_generation,
+            title: track.title.clone(),
+            artist: track.artists.join("、"),
+            cover: self
+                .playback_cover_urls
+                .get(row)
+                .cloned()
+                .unwrap_or_default(),
+            duration: duration_millis(track.duration),
+        };
+        let bridge = QPointer::from(&*self);
+        let publish = qmetaobject::queued_callback(move |pending: PendingPlaybackUi| {
+            let Some(bridge) = bridge.as_pinned() else {
+                return;
+            };
+            bridge.borrow_mut().publish_playback_ui(pending);
+        });
+        publish(pending);
+    }
+
+    fn publish_playback_ui(&mut self, pending: PendingPlaybackUi) {
+        if pending.generation != self.playback_ui_generation {
+            return;
+        }
+        self.current_title = pending.title.into();
+        self.current_artist = pending.artist.into();
+        self.current_cover = pending.cover.into();
         self.playback_state = "playing".into();
         self.playback_error = QString::default();
         self.playback_position = 0;
-        self.playback_duration = duration_millis(track.duration);
+        self.playback_duration = pending.duration;
         self.playback_changed();
         self.playback_progress_changed();
-        pointer_guard::drop_after_playback();
+        self.play_in_flight = false;
+        if let Some(row) = self.queued_play_row.take() {
+            self.start_queue_row(row);
+        }
     }
 
     fn toggle_playback_internal(&mut self) {
@@ -404,7 +451,6 @@ impl AppBridge {
         };
         self.playback_error = QString::default();
         self.playback_changed();
-        pointer_guard::drop_after_playback();
     }
 
     fn play_next_internal(&mut self) {
@@ -420,7 +466,6 @@ impl AppBridge {
                 self.playback_position = 0;
                 self.playback_changed();
                 self.playback_progress_changed();
-                pointer_guard::drop_after_playback();
             }
             return;
         };
@@ -545,7 +590,6 @@ impl AppBridge {
     }
 
     fn restore_session_internal(&mut self) {
-        pointer_guard::install();
         if self.restored {
             return;
         }
@@ -937,10 +981,12 @@ impl AppBridge {
         self.collections_changed();
     }
     fn set_playback_error(&mut self, error: String) {
+        self.play_in_flight = false;
+        self.queued_play_row = None;
+        self.playback_ui_generation = self.playback_ui_generation.wrapping_add(1);
         self.playback_state = "stopped".into();
         self.playback_error = error.into();
         self.playback_changed();
-        pointer_guard::drop_after_playback();
     }
 }
 

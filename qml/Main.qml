@@ -7,8 +7,8 @@ import Qingyin 1.0
 import "pointer.js" as Pointer
 
 // Pointer policy: see qml/pointer.js.
-// Window chrome uses DragHandler and drops the Qt grab after handing the
-// gesture to the compositor. Lists are display-only; input is ViewInput.
+// System chrome owns move/resize. Lists are ItemDelegate rows in a
+// ScrollView. Play and page switches are deferred with Qt.callLater.
 ApplicationWindow {
     id: window
 
@@ -17,17 +17,14 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 600
     visible: true
-    flags: Qt.Window | Qt.FramelessWindowHint
     title: backend.application_name()
-    color: "transparent"
+    color: window.backgroundColor
 
     property int currentView: 0
     property bool sidebarCollapsed: false
     property bool darkTheme: backend.dark_theme
     readonly property bool pointerDebug: backend.pointer_debug_enabled()
 
-    readonly property real cornerRadius: visibility === Window.Maximized ? 0 : 10
-    readonly property real resizeBorderWidth: 6
     readonly property color backgroundColor: darkTheme ? "#151817" : "#F5F6F3"
     readonly property color surfaceColor: darkTheme ? "#1D2220" : "#FAFBF8"
     readonly property color sidebarColor: darkTheme ? "#101312" : "#202A27"
@@ -50,6 +47,8 @@ ApplicationWindow {
     palette.button: surfaceColor
     palette.buttonText: textColor
     palette.highlight: accentColor
+    palette.mid: sidebarSelectedColor
+    palette.light: hoverColor
 
     AppBridge {
         id: backend
@@ -60,16 +59,8 @@ ApplicationWindow {
         Pointer.setDebug(window.pointerDebug, function(kind, target, extra) {
             backend.log_pointer(kind, target, extra)
         })
-        Pointer.setDropGrab(function() {
-            backend.drop_pointer_grabs()
-        })
         if (window.pointerDebug)
             Pointer.hookButtons(window.contentItem)
-    }
-
-    onActiveChanged: {
-        if (!window.active)
-            backend.drop_pointer_grabs()
     }
 
     onClosing: function(close) {
@@ -78,12 +69,15 @@ ApplicationWindow {
         Qt.quit()
     }
 
-    background: Rectangle {
-        color: window.backgroundColor
-        radius: window.cornerRadius
-    }
-
     font.family: "Noto Sans CJK SC"
+
+    function navButtonBackground(button, selected) {
+        if (button.down)
+            return window.sidebarSelectedColor
+        if (selected || button.hovered)
+            return window.sidebarSelectedColor
+        return "transparent"
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -93,14 +87,6 @@ ApplicationWindow {
             Layout.preferredWidth: window.sidebarCollapsed ? 64 : 210
             Layout.fillHeight: true
             color: window.sidebarColor
-            radius: window.cornerRadius
-
-            Rectangle {
-                anchors.right: parent.right
-                width: window.cornerRadius
-                height: parent.height
-                color: parent.color
-            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -123,22 +109,28 @@ ApplicationWindow {
                         font.weight: Font.DemiBold
                     }
 
-                    TapControl {
+                    Button {
                         id: collapseButton
                         objectName: "collapseSidebarButton"
 
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: 40
                         Layout.preferredHeight: 40
-                        radius: 5
-                        hoverFill: window.sidebarSelectedColor
-                        tooltip: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
-                        onTapped: window.sidebarCollapsed = !window.sidebarCollapsed
+                        flat: true
+                        hoverEnabled: true
+                        Accessible.name: window.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"
+                        onClicked: window.sidebarCollapsed = !window.sidebarCollapsed
 
-                        Text {
-                            anchors.centerIn: parent
+                        background: Rectangle {
+                            radius: 5
+                            color: window.navButtonBackground(collapseButton, false)
+                        }
+
+                        contentItem: Text {
                             text: window.sidebarCollapsed ? ">" : "<"
                             color: window.sidebarTextColor
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
                             font.pixelSize: 19
                         }
                     }
@@ -151,7 +143,7 @@ ApplicationWindow {
                         { label: "专辑", icon: "▣" }
                     ]
 
-                    delegate: TapControl {
+                    delegate: Button {
                         id: navigationButton
                         objectName: "navigationButton-" + navigationButton.modelData.label
 
@@ -160,15 +152,22 @@ ApplicationWindow {
 
                         Layout.fillWidth: true
                         Layout.preferredHeight: 42
-                        radius: 6
-                        restFill: window.currentView === navigationButton.index
-                            ? window.sidebarSelectedColor : "transparent"
-                        hoverFill: window.sidebarSelectedColor
-                        tooltip: window.sidebarCollapsed ? navigationButton.modelData.label : ""
-                        onTapped: window.currentView = navigationButton.index
+                        flat: true
+                        hoverEnabled: true
+                        Accessible.name: navigationButton.modelData.label
+                        onClicked: {
+                            const view = navigationButton.index
+                            Qt.callLater(function() { window.currentView = view })
+                        }
 
-                        RowLayout {
-                            anchors.fill: parent
+                        background: Rectangle {
+                            radius: 6
+                            color: window.navButtonBackground(
+                                navigationButton,
+                                window.currentView === navigationButton.index)
+                        }
+
+                        contentItem: RowLayout {
                             spacing: 8
 
                             Text {
@@ -209,21 +208,23 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
-                TapControl {
+                Button {
                     id: settingsButton
                     objectName: "settingsButton"
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
-                    radius: 6
-                    restFill: window.currentView === 3
-                        ? window.sidebarSelectedColor : "transparent"
-                    hoverFill: window.sidebarSelectedColor
-                    tooltip: window.sidebarCollapsed ? "设置" : ""
-                    onTapped: window.currentView = 3
+                    flat: true
+                    hoverEnabled: true
+                    Accessible.name: "设置"
+                    onClicked: Qt.callLater(function() { window.currentView = 3 })
 
-                    RowLayout {
-                        anchors.fill: parent
+                    background: Rectangle {
+                        radius: 6
+                        color: window.navButtonBackground(settingsButton, window.currentView === 3)
+                    }
+
+                    contentItem: RowLayout {
                         spacing: 8
 
                         Text {
@@ -264,140 +265,57 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
-            WindowControls {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 38
-                targetWindow: window
-                theme: window
-                cornerRadius: window.cornerRadius
-            }
-
-            StackLayout {
+            Loader {
+                id: pageLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: window.currentView
-
-                Library {
-                    enabled: window.currentView === 0
-                    theme: window
-                    libraryModel: backend
-                }
-                Artist {
-                    enabled: window.currentView === 1
-                    theme: window
-                    libraryModel: backend
-                }
-                Album {
-                    enabled: window.currentView === 2
-                    theme: window
-                    libraryModel: backend
-                }
-                Settings {
-                    enabled: window.currentView === 3
-                    theme: window
-                    darkMode: backend.dark_theme
-                    musicFolders: backend.music_folders
-                    onThemeRequested: function(dark) {
-                        backend.set_dark_theme(dark)
-                    }
-                }
+                sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
+                onLoaded: if (window.pointerDebug)
+                    Pointer.hookButtons(window.contentItem)
             }
 
             PlayerBar {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 104
                 theme: window
-                cornerRadius: window.cornerRadius
                 playerBackend: backend
             }
         }
     }
 
-    ResizeHandle {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: window.resizeBorderWidth
-        anchors.rightMargin: window.resizeBorderWidth
-        height: window.resizeBorderWidth
-        targetWindow: window
-        resizeEdges: Qt.TopEdge
-        resizeCursor: Qt.SizeVerCursor
+    Component {
+        id: libraryPage
+        Library {
+            theme: window
+            libraryModel: backend
+        }
     }
 
-    ResizeHandle {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: window.resizeBorderWidth
-        anchors.rightMargin: window.resizeBorderWidth
-        height: window.resizeBorderWidth
-        targetWindow: window
-        resizeEdges: Qt.BottomEdge
-        resizeCursor: Qt.SizeVerCursor
+    Component {
+        id: artistPage
+        Artist {
+            theme: window
+            libraryModel: backend
+        }
     }
 
-    ResizeHandle {
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.topMargin: window.resizeBorderWidth
-        anchors.bottomMargin: window.resizeBorderWidth
-        anchors.left: parent.left
-        width: window.resizeBorderWidth
-        targetWindow: window
-        resizeEdges: Qt.LeftEdge
-        resizeCursor: Qt.SizeHorCursor
+    Component {
+        id: albumPage
+        Album {
+            theme: window
+            libraryModel: backend
+        }
     }
 
-    ResizeHandle {
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.topMargin: window.resizeBorderWidth
-        anchors.bottomMargin: window.resizeBorderWidth
-        anchors.right: parent.right
-        width: window.resizeBorderWidth
-        targetWindow: window
-        resizeEdges: Qt.RightEdge
-        resizeCursor: Qt.SizeHorCursor
-    }
-
-    ResizeHandle {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        width: window.resizeBorderWidth * 2
-        height: window.resizeBorderWidth * 2
-        targetWindow: window
-        resizeEdges: Qt.TopEdge | Qt.LeftEdge
-        resizeCursor: Qt.SizeFDiagCursor
-    }
-
-    ResizeHandle {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        width: window.resizeBorderWidth * 2
-        height: window.resizeBorderWidth * 2
-        targetWindow: window
-        resizeEdges: Qt.TopEdge | Qt.RightEdge
-        resizeCursor: Qt.SizeBDiagCursor
-    }
-
-    ResizeHandle {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        width: window.resizeBorderWidth * 2
-        height: window.resizeBorderWidth * 2
-        targetWindow: window
-        resizeEdges: Qt.BottomEdge | Qt.LeftEdge
-        resizeCursor: Qt.SizeBDiagCursor
-    }
-
-    ResizeHandle {
-        anchors.bottom: parent.bottom
-        anchors.right: parent.right
-        width: window.resizeBorderWidth * 2
-        height: window.resizeBorderWidth * 2
-        targetWindow: window
-        resizeEdges: Qt.BottomEdge | Qt.RightEdge
-        resizeCursor: Qt.SizeFDiagCursor
+    Component {
+        id: settingsPage
+        Settings {
+            theme: window
+            darkMode: backend.dark_theme
+            musicFolders: backend.music_folders
+            onThemeRequested: function(dark) {
+                backend.set_dark_theme(dark)
+            }
+        }
     }
 }

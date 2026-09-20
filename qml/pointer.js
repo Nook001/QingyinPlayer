@@ -1,47 +1,30 @@
 .pragma library
 
 // Pointer policy for this QML tree:
-// 1. ListView/GridView are display-only: interactive false, no handlers
-//    as children. Flickable takes an exclusive grab on press/wheel even
-//    then; input lives on a sibling ViewInput overlay.
-// 2. Hidden StackLayout pages keep their size. ViewInput.visible follows
-//    inputActive so PointerHandlers are locally not visible.
-// 3. After startSystemMove / startSystemResize, drop the Qt grab immediately.
-//    Wayland compositors consume the pointer and Qt will not see a release.
-// 4. Do not mix MouseArea with PointerHandlers on the same surface.
-//    Buttons are TapControl / PlaybackButton. Sliders are PointHandler.
-// 5. List playback uses two completed taps, not Qt's double-tap grab.
-// 6. Pointer debug must not rebuild QML items during a handler callback.
-// 7. Never assign handler.enabled (Pointer.release) except after handing
-//    the pointer to the compositor. That assignment destroys QML bindings.
-// 8. Do not use Controls.ToolTip (xdg-popup) and do not set
-//    HoverHandler.cursorShape on buttons.
-// 9. Do not set PointerHandler.enabled false while the handler is pressed
-//    or active. Gate the action instead.
-// 10. Never call into playback / model reset inside a pointer callback.
-//     Qt.callLater so the grab can be released first.
-// 11. After a gesture ends, and after play_*, ask Rust to drop leftover
-//     exclusive grabs. Do not fake a release after n milliseconds.
+// 1. System chrome owns move and resize. Do not call startSystemMove.
+// 2. Lists are ItemDelegate rows inside one ScrollView Flickable
+//    (Repeater, not ListView/GridView). A second interactive view
+//    on the same surface takes an exclusive grab on Wayland.
+// 3. Buttons and sliders are Qt Quick Controls. Do not mix PointHandler
+//    or MouseArea onto the same surface.
+// 4. Hidden pages are unloaded (Loader). Change currentView with
+//    Qt.callLater so a live Flickable is not destroyed mid-click.
+// 5. Track playback is two ItemDelegate clicks within 400ms. Collection
+//    cards activate on one click. Both emit after Qt.callLater.
+// 6. Play, next, previous, seek, and page switches also use callLater
+//    so they do not run inside the pointer event.
+// 7. Do not use Controls.ToolTip.visible: hovered (xdg-popup on hover).
+//    Prefer Accessible.name, or ToolTip with the default delay.
+// 8. Pointer debug must not rebuild QML items during a handler callback.
 
 var debugEnabled = false
 var debugSink = null
-var dropGrab = null
 var lastWheelLogAt = 0
+var hookedItems = []
 
 function setDebug(enabled, sink) {
     debugEnabled = !!enabled
     debugSink = sink
-}
-
-function setDropGrab(fn) {
-    dropGrab = fn
-}
-
-function afterGesture() {
-    Qt.callLater(function() {
-        if (dropGrab)
-            dropGrab()
-    })
 }
 
 function debug(kind, target, extra) {
@@ -64,8 +47,7 @@ function debug(kind, target, extra) {
 function describeButton(item) {
     const name = item.objectName ? String(item.objectName) : ""
     const text = item.text !== undefined ? String(item.text) : ""
-    const tip = item.ToolTip && item.ToolTip.text ? String(item.ToolTip.text) : ""
-    return name || tip || text || String(item)
+    return name || text || String(item)
 }
 
 function isFlickableView(item) {
@@ -82,8 +64,8 @@ function hookButtons(item) {
         && item.to !== undefined
         && item.pressed !== undefined
         && item.moved !== undefined
-    if ((isButton || isSlider) && !item.__qingyinPointerHooked) {
-        item.__qingyinPointerHooked = true
+    if ((isButton || isSlider) && hookedItems.indexOf(item) === -1) {
+        hookedItems.push(item)
         const label = describeButton(item)
         if (item.clicked !== undefined)
             item.clicked.connect(function() {
@@ -104,58 +86,4 @@ function hookButtons(item) {
     const children = item.children
     for (let i = 0; i < children.length; ++i)
         hookButtons(children[i])
-}
-
-function release(handler) {
-    handler.enabled = false
-    Qt.callLater(function () {
-        handler.enabled = true
-    })
-}
-
-function handOff(handler, action) {
-    action()
-    release(handler)
-    afterGesture()
-}
-
-function viewIndexAt(view, point) {
-    if (!view || !point || !view.contentItem)
-        return -1
-    const scene = point.scenePosition
-    const mapped = scene
-        ? view.contentItem.mapFromItem(null, scene.x, scene.y)
-        : view.contentItem.mapFromItem(view, point.x, point.y)
-    return view.indexAt(mapped.x, mapped.y)
-}
-
-function resyncFlickable(view) {
-    if (!view)
-        return
-    Qt.callLater(function() {
-        if (!view)
-            return
-        const maxY = Math.max(0, view.contentHeight - view.height)
-        const y = Math.max(0, Math.min(maxY, view.contentY))
-        view.contentY = y
-        if (view.forceLayout)
-            view.forceLayout()
-    })
-}
-
-function scrollY(flickable, event) {
-    if (!flickable)
-        return
-    const delta = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 0.75
-    const maximumY = Math.max(0, flickable.contentHeight - flickable.height)
-    flickable.contentY = Math.max(0, Math.min(maximumY, flickable.contentY - delta))
-    // Accept so Flickable's built-in wheel handler does not take a grab.
-    event.accepted = true
-}
-
-function later(action) {
-    Qt.callLater(function() {
-        action()
-        afterGesture()
-    })
 }

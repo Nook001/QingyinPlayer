@@ -1,6 +1,6 @@
 # Qingyin 功能开发状态
 
-最后更新：2026-09-19
+最后更新：2026-09-20
 
 本文记录仓库当前已经实现的功能、仅完成的基础骨架，以及后续需要补齐的接口。
 “依赖已引入”不代表对应功能已经实现。
@@ -90,24 +90,15 @@
   `play_next`。
 - 播放状态、错误、当前标题、歌手和封面已作为 Qt 属性绑定到播放栏。
 - GStreamer EOS 会自动播放列表中的下一首；到达列表末尾后停止。
-- Qt Bridge 已导出播放位置、总时长、seek 和音量控制；进度由播放器推送到属性，播放栏只绑定，拖动 seek 时不被后台进度覆盖。
-- [`Main.qml`](../qml/Main.qml) 已使用无边框窗口，KDE 原生标题栏不再显示。
-- [`WindowControls.qml`](../qml/WindowControls.qml) 已实现窗口拖动、最小化、最大化/还原和关闭。
-- [`ResizeHandle.qml`](../qml/ResizeHandle.qml) 已通过系统级缩放 API 提供四边和四角缩放。
-- 普通窗口使用透明背景和 10px 圆角，最大化时自动恢复直角。
-- 侧边栏已纵向贯穿应用，顶部显示应用标题和折叠按钮，底部显示设置入口。
-- 侧边栏折叠后仅显示导航图标，导航和设置页切换可用。
+- Qt Bridge 已导出播放位置、总时长、seek 和音量控制；进度由播放器推送到属性，拖动 seek 时不被后台进度覆盖。
+- `playbin` 的 `load` / `play` / `pause` / `seek` 排队到 GLib 播放线程，不再在 Qt 主线程上 `set_state`。
+- [`Main.qml`](../qml/Main.qml) 使用系统标题栏与边框，侧栏、曲库、歌手、专辑、设置按当前页 `Loader` 装载。
+- 曲库双击播放、单击不切歌；歌手/专辑单击打开详情、详情双击播放。
 - [`Settings.qml`](../qml/Settings.qml) 已提供浅色与深色主题选择，主题、音量和音乐目录会写入配置并在启动时恢复。
-- [`Library.qml`](../qml/Library.qml) 可选择文件夹、显示扫描状态和真实曲目列表，点击曲目可播放；
-  列表含固定列标题、封面与加速滚轮滚动。
-- [`PlayerBar.qml`](../qml/PlayerBar.qml) 已显示当前封面、标题、歌手和错误，并接通
-  播放/暂停、上一首、下一首、进度拖动与音量；核心播放控件保持窗口几何居中。
-- 曲库改为双击曲目后切换并播放，单击不会打断当前歌曲。
-- [`Library.qml`](../qml/Library.qml) 顶部提供搜索框，按歌名、歌手、专辑分字段过滤当前曲库。
-- 搜索支持汉字原文、全拼和首字母输入、空结果状态及双击播放，清空后恢复完整曲库。
-- 曲库列表使用可排序曲目表格；歌曲名、专辑和时长表头支持升序/降序切换，汉字按拼音与英文互插。
-- 歌手页与专辑页已聚合曲库并支持封面网格、详情列表和双击播放。
+- [`Library.qml`](../qml/Library.qml) 可选择文件夹、显示扫描状态和真实曲目列表，顶部提供拼音搜索与排序。
+- [`PlayerBar.qml`](../qml/PlayerBar.qml) 已接通播放/暂停、上一首、下一首、进度拖动与音量。
 - 启动恢复和添加文件夹后会启动目录监听；运行期文件变化经工作线程增量写入 SQLite，再回到主线程刷新曲库、歌手和专辑。
+- Qt Widgets 壳实验已撤回：同样在 `play_*` 后指针假死，且 UX 不可接受。进程仍从 `qml/Main.qml` 启动。
 
 ## 已有骨架但未贯通
 
@@ -149,7 +140,7 @@
 - `scan_directory(path) -> Result<ScanSummary, LibraryError>`：已完成同步后端实现。
 - `watch_directories(paths) -> Result<LibraryWatcher, LibraryError>`：已完成；事件在工作线程合并后刷新。
 - `refresh_path(path) -> Result<LibraryChange, LibraryError>`：已完成单路径新增、修改和删除。
-- 扫描应调用 Metadata、Chinese 和 Storage，而不是在 QML 中处理文件。
+- 扫描应调用 Metadata、Chinese 和 Storage，而不是在界面里处理文件。
 
 #### Player
 
@@ -176,9 +167,9 @@
 - 信号：曲库变化、扫描进度、播放状态变化和错误通知。
 - 跨线程结果必须通过 Qt queued callback 回到主线程。
 
-#### QML
+#### 界面
 
-- 将文件夹选择结果连接到 `AppBridge.addLibraryFolder`。
+- 将文件夹选择结果连接到 `AppBridge.add_library_folder`。
 - 曲库、歌手和专辑页绑定后端模型。
 - 播放、暂停、上一首、下一首、进度和音量均已接通。
 - 增加扫描中、空结果、文件不可读和播放失败状态。

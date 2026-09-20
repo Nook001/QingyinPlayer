@@ -9,7 +9,7 @@ Qingyin / 清音
 | --- | --- |
 | 主语言 |	Rust |
 | UI	 |Qt 6 Quick / QML |
-| Rust ↔ Qt |	Qt Bridge for Rust（`qmetaobject`） |
+| Rust ↔ Qt |	`qmetaobject` |
 | 音频播放	 |GStreamer + gstreamer-rs |
 | Linux 音频 |	PipeWire |
 | Metadata |	Lofty |
@@ -27,7 +27,6 @@ Qingyin / 清音
 │                                  │
 │ Library / Artist / Album / Track │
 │ Queue / Player Bar / Settings    │
-│ Window Controls                  │
 └───────┬─────────┘
                 │
          Qt Rust Bridge
@@ -64,16 +63,6 @@ qingyin/
 │   └── ui_bridge/
 │
 ├── qml/
-│   ├── Main.qml
-│   ├── Library.qml
-│   ├── Artist.qml
-│   ├── Album.qml
-│   ├── CollectionBrowser.qml
-│   ├── TrackTable.qml
-│   ├── PlayerBar.qml
-│   ├── Settings.qml
-│   ├── WindowControls.qml
-│   └── ResizeHandle.qml
 │
 └── assets/
 
@@ -83,4 +72,4 @@ Rust 负责逻辑，QML 只负责 UI；成熟组件负责播放和解码；自�
 
 运行时模块依赖、数据流、播放后端与 SQLite schema 见仓库根目录 [README.md](../README.md)。本文保留产品边界与桥接决策。
 
-桥接决策：使用 `qmetaobject` 由 Rust 直接导出 `QObject`、属性、信号和方法给 QML；不采用 CXX-Qt，也不在项目中维护手写 C++ 桥接层。
+桥接决策：使用 `qmetaobject` 由 Rust 导出 `QObject`、属性、信号和方法给 QML。曾用 Qt Widgets 壳验证卡死是否只属于 Quick；Hyprland 上同样在 `play_*` 后失去指针，已改回 QML。`playbin` 的状态切换改到 GLib 播放线程，不再和 Qt 主线程并发操作。

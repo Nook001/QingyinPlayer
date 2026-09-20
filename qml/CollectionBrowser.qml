@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "pointer.js" as Pointer
 
@@ -23,11 +24,6 @@ Item {
 
     readonly property bool showingDetail: root.selectedName !== ""
 
-    onVisibleChanged: {
-        if (visible)
-            Qt.callLater(function() { Pointer.resyncFlickable(collectionGrid) })
-    }
-
     onShowingDetailChanged: {
         if (root.showingDetail)
             Qt.callLater(function() { detailTable.clampScroll() })
@@ -42,23 +38,29 @@ Item {
             Layout.fillWidth: true
             spacing: 12
 
-            TapControl {
+            Button {
                 id: backButton
                 objectName: "collectionBackButton"
 
                 visible: root.showingDetail
                 Layout.preferredWidth: 40
                 Layout.preferredHeight: 40
-                radius: 6
-                hoverFill: root.theme.hoverColor
-                tooltip: "返回"
-                onTapped: root.collectionClosed()
+                flat: true
+                hoverEnabled: true
+                Accessible.name: "返回"
+                onClicked: Qt.callLater(function() { root.collectionClosed() })
 
-                Text {
-                    anchors.centerIn: parent
+                contentItem: Text {
                     text: "‹"
                     color: root.theme.textColor
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                     font.pixelSize: 28
+                }
+
+                background: Rectangle {
+                    radius: 6
+                    color: backButton.hovered ? root.theme.hoverColor : "transparent"
                 }
             }
 
@@ -118,101 +120,98 @@ Item {
             color: root.theme.dividerColor
         }
 
-        Item {
+        ScrollView {
+            id: collectionScroll
+
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !root.showingDetail && collectionGrid.count > 0
+            visible: !root.showingDetail && collectionRepeater.count > 0
             clip: true
+            contentWidth: availableWidth
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-            GridView {
-                id: collectionGrid
+            Grid {
+                width: collectionScroll.availableWidth
+                columns: Math.max(1, Math.floor(width / 176))
 
-                anchors.fill: parent
-                clip: true
-                cellWidth: 176
-                cellHeight: 232
-                model: root.collectionModel
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: false
-                pixelAligned: true
-                maximumFlickVelocity: 0
+                Repeater {
+                    id: collectionRepeater
+                    model: root.collectionModel
 
-                delegate: Item {
-                    id: collectionCard
+                    delegate: ItemDelegate {
+                        id: collectionCard
 
-                    required property int index
-                    required property string name
-                    required property string subtitle
-                    required property string cover
+                        required property int index
+                        required property string name
+                        required property string subtitle
+                        required property string cover
 
-                    width: collectionGrid.cellWidth
-                    height: collectionGrid.cellHeight
+                        width: 176
+                        height: 232
+                        padding: 8
+                        hoverEnabled: true
+                        text: collectionCard.name
+                        objectName: "card-" + collectionCard.index
+                        Accessible.name: collectionCard.name
 
-                    Rectangle {
-                        anchors.fill: parent
-                        color: gridInput.hoverRow === collectionCard.index
-                            ? root.theme.hoverColor : "transparent"
-                        radius: 10
-                    }
+                        background: Rectangle {
+                            color: collectionCard.hovered ? root.theme.hoverColor : "transparent"
+                            radius: 10
+                        }
 
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
+                        contentItem: Column {
+                            spacing: 8
 
-                        Rectangle {
-                            width: parent.width
-                            height: parent.width
-                            color: root.theme.artworkColor
-                            radius: 8
-                            clip: true
+                            Rectangle {
+                                width: parent.width
+                                height: parent.width
+                                color: root.theme.artworkColor
+                                radius: 8
+                                clip: true
 
-                            Image {
-                                id: coverImage
-                                anchors.fill: parent
-                                source: collectionCard.cover
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                visible: status === Image.Ready
+                                Image {
+                                    id: coverImage
+                                    anchors.fill: parent
+                                    source: collectionCard.cover
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    visible: status === Image.Ready
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "♫"
+                                    color: root.theme.accentColor
+                                    font.pixelSize: 28
+                                    visible: coverImage.status !== Image.Ready
+                                }
                             }
 
                             Text {
-                                anchors.centerIn: parent
-                                text: "♫"
-                                color: root.theme.accentColor
-                                font.pixelSize: 28
-                                visible: coverImage.status !== Image.Ready
+                                width: parent.width
+                                text: collectionCard.name
+                                color: root.theme.textColor
+                                elide: Text.ElideRight
+                                font.pixelSize: 14
+                                font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: collectionCard.subtitle
+                                color: root.theme.mutedTextColor
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
                             }
                         }
 
-                        Text {
-                            width: parent.width
-                            text: collectionCard.name
-                            color: root.theme.textColor
-                            elide: Text.ElideRight
-                            font.pixelSize: 14
-                            font.weight: Font.DemiBold
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: collectionCard.subtitle
-                            color: root.theme.mutedTextColor
-                            elide: Text.ElideRight
-                            font.pixelSize: 12
+                        onClicked: {
+                            Pointer.debug("clicked", collectionCard.objectName, collectionCard.name)
+                            const row = collectionCard.index
+                            Qt.callLater(function() { root.collectionOpened(row) })
                         }
                     }
                 }
-            }
-
-            ViewInput {
-                id: gridInput
-                anchors.fill: parent
-                view: collectionGrid
-                inputActive: root.enabled && !root.showingDetail
-                debugLabel: "card-tap"
-                doubleActivate: false
-                onActivated: function(row) { root.collectionOpened(row) }
             }
         }
 
@@ -221,19 +220,17 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.showingDetail
-            enabled: visible
             theme: root.theme
             trackModel: root.detailModel
             sortable: false
             debugLabel: "detail"
-            handlersEnabled: root.enabled && root.showingDetail
             onTrackActivated: function(row) { root.trackActivated(row) }
         }
 
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !root.showingDetail && collectionGrid.count === 0
+            visible: !root.showingDetail && collectionRepeater.count === 0
 
             Column {
                 anchors.centerIn: parent

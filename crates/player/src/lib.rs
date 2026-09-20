@@ -66,6 +66,8 @@ pub struct Player {
     state: PlaybackState,
     playbin: gst::Element,
     current_path: Option<PathBuf>,
+    volume: f64,
+    gst_context: Option<glib::MainContext>,
     event_monitor: Option<EventMonitor>,
 }
 
@@ -102,11 +104,19 @@ impl Player {
             video_sink.set_property("sync", false);
             playbin.set_property("video-sink", video_sink);
         }
+        if let Ok(text_sink) = gst::ElementFactory::make("fakesink").build() {
+            text_sink.set_property("sync", false);
+            playbin.set_property("text-sink", text_sink);
+        }
+        playbin.set_property_from_str("flags", "audio+soft-volume");
+        let volume = playbin.property("volume");
 
         Ok(Self {
             state: PlaybackState::Stopped,
             playbin,
             current_path: None,
+            volume,
+            gst_context: None,
             event_monitor: None,
         })
     }
@@ -123,34 +133,46 @@ impl Player {
 
     #[must_use]
     pub fn position(&self) -> Option<Duration> {
-        query_clock(&self.playbin, QueryClock::Position)
+        self.query_clock_safe(QueryClock::Position)
     }
 
     #[must_use]
     pub fn duration(&self) -> Option<Duration> {
-        query_clock(&self.playbin, QueryClock::Duration)
+        self.query_clock_safe(QueryClock::Duration)
     }
 
     #[must_use]
-    pub fn volume(&self) -> f64 {
-        self.playbin.property("volume")
+    pub const fn volume(&self) -> f64 {
+        self.volume
     }
 
     pub fn set_volume(&mut self, volume: f64) {
-        self.playbin.set_property("volume", volume.clamp(0.0, 1.0));
+        self.volume = volume.clamp(0.0, 1.0);
+        let volume = self.volume;
+        self.on_gst_thread(move |playbin| {
+            playbin.set_property("volume", volume);
+        });
     }
 
     /// Seeks within the loaded track.
     ///
+    /// The seek is queued onto the playback thread. Failures after that
+    /// arrive as [`PlayerEvent::Error`].
+    ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when `GStreamer` rejects the seek operation.
+    /// Currently always returns `Ok`; the signature keeps [`PlayerError`] for callers.
     pub fn seek(&mut self, position: Duration) -> Result<(), PlayerError> {
         let position =
             gst::ClockTime::from_nseconds(u64::try_from(position.as_nanos()).unwrap_or(u64::MAX));
-        self.playbin
-            .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, position)
-            .map_err(|error| PlayerError::Seek(error.to_string()))
+        self.on_gst_thread(move |playbin| {
+            if let Err(error) =
+                playbin.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, position)
+            {
+                tracing::warn!(error = %error, "GStreamer seek failed");
+            }
+        });
+        Ok(())
     }
 
     /// Starts forwarding bus events and playback progress to `handler`.
@@ -166,6 +188,7 @@ impl Player {
     where
         F: Fn(PlayerEvent) + Send + 'static,
     {
+        self.gst_context = None;
         self.event_monitor = None;
         let bus = self.playbin.bus().ok_or(PlayerError::MissingBus)?;
         let playbin = self.playbin.clone();
@@ -177,6 +200,7 @@ impl Player {
             })
             .map_err(|_| PlayerError::BusWatch)?;
         if let Ok(Ok(main_loop)) = ready_rx.recv() {
+            self.gst_context = Some(main_loop.context());
             self.event_monitor = Some(EventMonitor {
                 main_loop,
                 thread: Some(thread),
@@ -188,11 +212,38 @@ impl Player {
         }
     }
 
+    fn on_gst_thread<F>(&self, func: F)
+    where
+        F: FnOnce(&gst::Element) + Send + 'static,
+    {
+        let playbin = self.playbin.clone();
+        if let Some(context) = &self.gst_context {
+            context.invoke_with_priority(glib::Priority::DEFAULT, move || func(&playbin));
+        } else {
+            func(&self.playbin);
+        }
+    }
+
+    fn query_clock_safe(&self, query: QueryClock) -> Option<Duration> {
+        let Some(context) = &self.gst_context else {
+            return query_clock(&self.playbin, query);
+        };
+        let (tx, rx) = mpsc::sync_channel(1);
+        let playbin = self.playbin.clone();
+        context.invoke_with_priority(glib::Priority::DEFAULT, move || {
+            let _ = tx.send(query_clock(&playbin, query));
+        });
+        rx.recv_timeout(Duration::from_millis(100)).ok().flatten()
+    }
+
     /// Loads a local audio file without starting playback.
+    ///
+    /// Path checks run on the caller thread; pipeline reset is queued onto the
+    /// playback thread. Failures after that arrive as [`PlayerEvent::Error`].
     ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when the path is invalid or `GStreamer` rejects the state change.
+    /// Returns [`PlayerError`] when the path is invalid.
     pub fn load(&mut self, path: impl AsRef<Path>) -> Result<(), PlayerError> {
         let path = path.as_ref();
         if !path.is_file() {
@@ -211,8 +262,14 @@ impl Player {
                 source,
             })?;
 
-        self.set_gstreamer_state(gst::State::Null)?;
-        self.playbin.set_property("uri", uri.as_str());
+        let uri = uri.as_str().to_owned();
+        self.on_gst_thread(move |playbin| {
+            if let Err(error) = playbin.set_state(gst::State::Null) {
+                tracing::warn!(error = %error, "failed to reset playbin before load");
+                return;
+            }
+            playbin.set_property("uri", uri.as_str());
+        });
         self.current_path = Some(path);
         self.state = PlaybackState::Stopped;
         Ok(())
@@ -225,9 +282,13 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when `GStreamer` rejects the state change.
+    /// Currently always returns `Ok`; the signature keeps [`PlayerError`] for callers.
     pub fn play(&mut self) -> Result<(), PlayerError> {
-        self.set_gstreamer_state(gst::State::Playing)?;
+        self.on_gst_thread(|playbin| {
+            if let Err(error) = playbin.set_state(gst::State::Playing) {
+                tracing::warn!(error = %error, "failed to set playbin playing");
+            }
+        });
         self.state = PlaybackState::Playing;
         Ok(())
     }
@@ -236,9 +297,13 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when `GStreamer` rejects the state change.
+    /// Currently always returns `Ok`; the signature keeps [`PlayerError`] for callers.
     pub fn pause(&mut self) -> Result<(), PlayerError> {
-        self.set_gstreamer_state(gst::State::Paused)?;
+        self.on_gst_thread(|playbin| {
+            if let Err(error) = playbin.set_state(gst::State::Paused) {
+                tracing::warn!(error = %error, "failed to set playbin paused");
+            }
+        });
         self.state = PlaybackState::Paused;
         Ok(())
     }
@@ -247,18 +312,15 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns [`PlayerError`] when `GStreamer` rejects the state change.
+    /// Currently always returns `Ok`; the signature keeps [`PlayerError`] for callers.
     pub fn stop(&mut self) -> Result<(), PlayerError> {
-        self.set_gstreamer_state(gst::State::Null)?;
+        self.on_gst_thread(|playbin| {
+            if let Err(error) = playbin.set_state(gst::State::Null) {
+                tracing::warn!(error = %error, "failed to reset playbin");
+            }
+        });
         self.state = PlaybackState::Stopped;
         Ok(())
-    }
-
-    fn set_gstreamer_state(&self, state: gst::State) -> Result<(), PlayerError> {
-        self.playbin
-            .set_state(state)
-            .map(|_| ())
-            .map_err(|error| PlayerError::StateChange(error.to_string()))
     }
 }
 
@@ -297,7 +359,7 @@ fn run_bus_loop<F>(
             let _watch_id = watch.attach(Some(&loop_context));
             let _ = ready_tx.send(Ok(main_loop.clone()));
             main_loop.run();
-            stop_progress(&progress_source);
+            stop_progress(&progress_source, &loop_context);
         })
         .is_err()
     {
@@ -322,7 +384,7 @@ fn handle_bus_message(
                 emit_progress(playbin, handler);
                 start_progress(progress_source, context, playbin, handler);
             } else {
-                stop_progress(progress_source);
+                stop_progress(progress_source, context);
             }
         }
         gst::MessageView::DurationChanged(_) if is_playbin_message(playbin, message) => {
@@ -358,12 +420,14 @@ fn start_progress(
     *slot = Some(source.attach(Some(context)));
 }
 
-fn stop_progress(progress_source: &Mutex<Option<glib::SourceId>>) {
+fn stop_progress(progress_source: &Mutex<Option<glib::SourceId>>, context: &glib::MainContext) {
     let mut slot = progress_source
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(source) = slot.take() {
-        source.remove();
+    if let Some(source_id) = slot.take()
+        && let Some(source) = context.find_source_by_id(&source_id)
+    {
+        source.destroy();
     }
 }
 
@@ -469,8 +533,18 @@ fn required_format_plugins(path: &Path) -> &'static [&'static str] {
 
 impl Drop for Player {
     fn drop(&mut self) {
+        if let Some(context) = self.gst_context.take() {
+            let playbin = self.playbin.clone();
+            let (tx, rx) = mpsc::sync_channel(1);
+            context.invoke_with_priority(glib::Priority::DEFAULT, move || {
+                let _ = playbin.set_state(gst::State::Null);
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+        } else {
+            let _ = self.playbin.set_state(gst::State::Null);
+        }
         self.event_monitor = None;
-        let _ = self.playbin.set_state(gst::State::Null);
     }
 }
 
