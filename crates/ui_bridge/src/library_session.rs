@@ -25,7 +25,8 @@ use tracing::warn;
 use crate::collections::{CollectionModel, DetailTrackModel, TrackListModel};
 
 const SEARCH_RESULT_LIMIT: usize = 500;
-const WORKER_JOIN: Duration = Duration::from_secs(2);
+const WORKER_JOIN: Duration = Duration::from_millis(100);
+const VISIBLE_COVER_HINT: usize = 64;
 
 #[derive(Debug, Clone)]
 struct LibrarySnapshot {
@@ -291,7 +292,7 @@ impl LibrarySession {
         if let Some(mailbox) = &self.search_mailbox {
             mailbox.stop();
         }
-        self.release_watcher(true);
+        self.release_watcher(false);
         if let Some(mut scheduler) = self.cover_scheduler.take() {
             scheduler.shutdown();
         }
@@ -658,20 +659,24 @@ impl LibrarySession {
             protected.push(digest);
         }
         scheduler.protect(protected);
-        scheduler.request_prune();
-        for track in &self.library_tracks {
+        let mut tracks = self.library_tracks.clone();
+        crate::sort_snapshots(&mut tracks, self.sort_column, self.sort_ascending);
+        for (index, track) in tracks.iter().enumerate() {
             if !track.cover_url.is_empty() {
                 continue;
             }
             let priority = if track.id() == playing {
                 CoverPriority::Playing
+            } else if index < VISIBLE_COVER_HINT {
+                CoverPriority::Visible
             } else {
                 CoverPriority::Background
             };
             scheduler.request(CoverRequest {
                 track_id: track.id(),
                 path: track.metadata.path.clone(),
-                metadata: (*track.metadata).clone(),
+                fingerprint: track.metadata.fingerprint(),
+                cover_digest: track.metadata.cover_digest.clone(),
                 priority,
             });
         }
@@ -803,7 +808,8 @@ impl LibrarySession {
             scheduler.request(CoverRequest {
                 track_id,
                 path: track.metadata.path.clone(),
-                metadata: (*track.metadata).clone(),
+                fingerprint: track.metadata.fingerprint(),
+                cover_digest: track.metadata.cover_digest.clone(),
                 priority: CoverPriority::Playing,
             });
             if let Some(digest) = track.metadata.cover_digest.clone() {

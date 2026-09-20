@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Cursor, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
@@ -22,7 +23,10 @@ pub const MAX_COVER_SOURCE_EDGE: u32 = 8192;
 pub const MAX_COVER_EDGE: u32 = 512;
 pub const MAX_IN_FLIGHT_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_CACHE_BYTES: u64 = 512 * 1024 * 1024;
-const WORKER_JOIN: Duration = Duration::from_secs(2);
+const COVER_WORKERS: usize = 4;
+const REQUEST_MAILBOX: usize = 4096;
+const WORK_MAILBOX: usize = 4;
+const WORKER_JOIN: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum CoverError {
@@ -95,12 +99,26 @@ impl CoverService {
 
     #[must_use]
     pub fn lookup(&self, track: &TrackMetadata) -> CoverLookup {
-        if let Some(digest) = track.cover_digest.as_deref()
+        self.lookup_key(
+            &track.path,
+            track.fingerprint(),
+            track.cover_digest.as_deref(),
+        )
+    }
+
+    #[must_use]
+    pub fn lookup_key(
+        &self,
+        path: &Path,
+        fingerprint: FileFingerprint,
+        digest: Option<&str>,
+    ) -> CoverLookup {
+        if let Some(digest) = digest
             && let Some(url) = self.url_for_digest(digest)
         {
             return CoverLookup::Ready(url);
         }
-        match self.mapping(&track.path, &track.fingerprint()) {
+        match self.mapping(path, &fingerprint) {
             Some(Mapping::Digest(digest)) => self
                 .url_for_digest(&digest)
                 .map_or(CoverLookup::Absent, CoverLookup::Ready),
@@ -300,10 +318,22 @@ fn mapping_key(path: &Path, fingerprint: FileFingerprint) -> String {
 }
 
 fn is_valid_cache_file(path: &Path) -> bool {
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(mut file) = File::open(path) else {
         return false;
     };
-    image::load_from_memory(&bytes).is_ok()
+    let mut header = [0_u8; 8];
+    let Ok(read) = file.read(&mut header) else {
+        return false;
+    };
+    read >= 3 && (looks_like_png(&header) || looks_like_jpeg(&header))
+}
+
+fn looks_like_png(header: &[u8]) -> bool {
+    header.starts_with(&[0x89, b'P', b'N', b'G'])
+}
+
+fn looks_like_jpeg(header: &[u8]) -> bool {
+    header.starts_with(&[0xFF, 0xD8, 0xFF])
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -320,6 +350,15 @@ fn encode_cached_cover(data: &[u8]) -> Option<Vec<u8>> {
     if data.is_empty() || data.len() > MAX_COVER_SOURCE_BYTES {
         return None;
     }
+    if (looks_like_png(data) || looks_like_jpeg(data))
+        && let Some((width, height)) = image_dimensions(data)
+        && width > 0
+        && height > 0
+        && width <= MAX_COVER_EDGE
+        && height <= MAX_COVER_EDGE
+    {
+        return Some(data.to_vec());
+    }
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_COVER_SOURCE_EDGE);
     limits.max_image_height = Some(MAX_COVER_SOURCE_EDGE);
@@ -328,11 +367,24 @@ fn encode_cached_cover(data: &[u8]) -> Option<Vec<u8>> {
         .with_guessed_format()
         .ok()?;
     reader.limits(limits);
-    let image = reader.decode().ok()?;
-    let image = image.thumbnail(MAX_COVER_EDGE, MAX_COVER_EDGE);
+    let image = reader
+        .decode()
+        .ok()?
+        .thumbnail(MAX_COVER_EDGE, MAX_COVER_EDGE);
     let mut output = Cursor::new(Vec::new());
-    image.write_to(&mut output, ImageFormat::Png).ok()?;
+    image
+        .into_rgb8()
+        .write_to(&mut output, ImageFormat::Jpeg)
+        .ok()?;
     Some(output.into_inner())
+}
+
+fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CoverError> {
@@ -354,10 +406,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CoverError> {
                 source,
             })?;
         file.write_all(bytes).map_err(|source| CoverError::Io {
-            path: temp_path.clone(),
-            source,
-        })?;
-        file.sync_all().map_err(|source| CoverError::Io {
             path: temp_path.clone(),
             source,
         })?;
@@ -384,7 +432,8 @@ pub enum CoverPriority {
 pub struct CoverRequest {
     pub track_id: i64,
     pub path: PathBuf,
-    pub metadata: TrackMetadata,
+    pub fingerprint: FileFingerprint,
+    pub cover_digest: Option<String>,
     pub priority: CoverPriority,
 }
 
@@ -419,9 +468,9 @@ impl CoverScheduler {
     #[must_use]
     pub fn start(
         service: Arc<CoverService>,
-        on_update: impl Fn(CoverUpdate) + Send + 'static,
+        on_update: impl Fn(CoverUpdate) + Send + Sync + 'static,
     ) -> Self {
-        let (tx, rx) = mpsc::sync_channel(256);
+        let (tx, rx) = mpsc::sync_channel(REQUEST_MAILBOX);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_service = Arc::clone(&service);
         let worker_stop = Arc::clone(&stop);
@@ -477,18 +526,31 @@ fn run_scheduler(
     service: Arc<CoverService>,
     rx: Receiver<SchedulerMessage>,
     stop: Arc<AtomicBool>,
-    on_update: impl Fn(CoverUpdate),
+    on_update: impl Fn(CoverUpdate) + Send + Sync + 'static,
 ) {
+    let on_update = Arc::new(on_update);
+    let (work_tx, work_rx) = mpsc::sync_channel::<CoverRequest>(WORK_MAILBOX);
+    let work_rx = Arc::new(Mutex::new(work_rx));
+    let inflight_bytes = Arc::new(AtomicUsize::new(0));
+    for index in 0..COVER_WORKERS {
+        let work_rx = Arc::clone(&work_rx);
+        let service = Arc::clone(&service);
+        let stop = Arc::clone(&stop);
+        let on_update = Arc::clone(&on_update);
+        let inflight_bytes = Arc::clone(&inflight_bytes);
+        let _ = thread::Builder::new()
+            .name(format!("qingyin-cover-{index}"))
+            .spawn(move || cover_worker(service, work_rx, stop, inflight_bytes, on_update));
+    }
     let mut queued: HashMap<i64, CoverRequest> = HashMap::new();
-    let mut inflight = HashSet::<i64>::new();
-    let inflight_bytes = AtomicUsize::new(0);
     let mut protected = HashSet::new();
+    let mut pruned = false;
     loop {
         if stop.load(Ordering::Relaxed) {
             break;
         }
         let message = if queued.is_empty() {
-            match rx.recv_timeout(Duration::from_millis(200)) {
+            match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(message) => Some(message),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -504,6 +566,7 @@ fn run_scheduler(
             }
             Some(SchedulerMessage::Prune) => {
                 let _ = service.prune(DEFAULT_CACHE_BYTES, &protected);
+                pruned = true;
             }
             Some(SchedulerMessage::Request(request)) => {
                 let request = *request;
@@ -516,35 +579,68 @@ fn run_scheduler(
                     })
                     .or_insert(request);
             }
-            None => {}
+            None => {
+                if !pruned && queued.is_empty() {
+                    pruned = true;
+                    let _ = service.prune(DEFAULT_CACHE_BYTES, &protected);
+                }
+            }
         }
-        while inflight.len() < 2 {
-            let Some(id) = next_request_id(&queued, &inflight) else {
+        while !stop.load(Ordering::Relaxed) {
+            let Some(id) = next_request_id(&queued) else {
                 break;
             };
             let Some(request) = queued.remove(&id) else {
                 break;
             };
-            if inflight_bytes.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_BYTES {
-                queued.insert(id, request);
-                break;
+            match work_tx.try_send(request) {
+                Ok(()) => {}
+                Err(TrySendError::Full(request)) => {
+                    queued.insert(request.track_id, request);
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => return,
             }
-            inflight.insert(id);
-            if let Some(url) = fulfill(&service, &request, &inflight_bytes) {
-                on_update(CoverUpdate {
-                    track_id: request.track_id,
-                    url,
-                });
-            }
-            inflight.remove(&id);
         }
     }
 }
 
-fn next_request_id(queued: &HashMap<i64, CoverRequest>, inflight: &HashSet<i64>) -> Option<i64> {
+fn cover_worker(
+    service: Arc<CoverService>,
+    work_rx: Arc<Mutex<Receiver<CoverRequest>>>,
+    stop: Arc<AtomicBool>,
+    inflight_bytes: Arc<AtomicUsize>,
+    on_update: Arc<dyn Fn(CoverUpdate) + Send + Sync>,
+) {
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let request = {
+            let receiver = work_rx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match receiver.recv_timeout(Duration::from_millis(50)) {
+                Ok(request) => request,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        };
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        if let Some(url) = fulfill(&service, &request, &inflight_bytes) {
+            on_update(CoverUpdate {
+                track_id: request.track_id,
+                url,
+            });
+        }
+    }
+}
+
+fn next_request_id(queued: &HashMap<i64, CoverRequest>) -> Option<i64> {
     queued
         .values()
-        .filter(|request| !inflight.contains(&request.track_id))
         .min_by_key(|request| request.priority)
         .map(|request| request.track_id)
 }
@@ -555,7 +651,11 @@ fn fulfill(
     inflight_bytes: &AtomicUsize,
 ) -> Option<String> {
     let _span = tracing::info_span!("covers.fulfill", track_id = request.track_id).entered();
-    match service.lookup(&request.metadata) {
+    match service.lookup_key(
+        &request.path,
+        request.fingerprint,
+        request.cover_digest.as_deref(),
+    ) {
         CoverLookup::Ready(url) => return Some(url),
         CoverLookup::Failed(CoverFailure::TemporaryIo) | CoverLookup::Absent => {}
         CoverLookup::Failed(_) => return None,
@@ -563,16 +663,23 @@ fn fulfill(
     let art = match qingyin_metadata::read_cover(&request.path) {
         Ok(Some(art)) => art,
         Ok(None) => {
-            let _ = service.remember_missing(&request.path, request.metadata.fingerprint());
+            let _ = service.remember_missing(&request.path, request.fingerprint);
             return None;
         }
         Err(_) => {
-            let _ = service.remember_temporary_io(&request.path, request.metadata.fingerprint());
+            let _ = service.remember_temporary_io(&request.path, request.fingerprint);
             return None;
         }
     };
+    while inflight_bytes
+        .load(Ordering::Relaxed)
+        .saturating_add(art.data.len())
+        > MAX_IN_FLIGHT_BYTES
+    {
+        thread::sleep(Duration::from_millis(5));
+    }
     inflight_bytes.fetch_add(art.data.len(), Ordering::Relaxed);
-    let stored = service.store(&request.path, request.metadata.fingerprint(), &art);
+    let stored = service.store(&request.path, request.fingerprint, &art);
     inflight_bytes.fetch_sub(art.data.len(), Ordering::Relaxed);
     stored.ok().flatten()
 }
@@ -619,6 +726,8 @@ mod tests {
             .unwrap()
             .expect("url");
         assert!(url.starts_with("file:"));
+        let cached = fs::read(service.file_for_digest(&art.digest())).unwrap();
+        assert_eq!(cached, png);
         let again = service
             .store(path, fingerprint, &art)
             .unwrap()

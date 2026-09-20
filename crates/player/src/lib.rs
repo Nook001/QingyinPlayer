@@ -12,7 +12,7 @@ use thiserror::Error;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 const HIDDEN_PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
 const DURATION_PROBE_LIMIT: u32 = 8;
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(150);
 
 pub type CommandId = u64;
 pub type LoadGeneration = u64;
@@ -265,7 +265,13 @@ impl Player {
         match rx.recv_timeout(SHUTDOWN_TIMEOUT) {
             Ok(()) => {
                 if let Some(worker) = self.worker.take() {
-                    let _ = worker.join();
+                    let done = mpsc::sync_channel(1);
+                    let (tx, join_rx) = done;
+                    thread::spawn(move || {
+                        let _ = worker.join();
+                        let _ = tx.send(());
+                    });
+                    let _ = join_rx.recv_timeout(SHUTDOWN_TIMEOUT);
                 }
                 Ok(())
             }

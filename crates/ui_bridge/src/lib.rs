@@ -12,7 +12,6 @@ use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -95,14 +94,7 @@ impl SettingsWriter {
     fn shutdown(&mut self, settings: &Settings) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         self.flush(settings);
-        if let Some(worker) = self.worker.take() {
-            let (tx, rx) = mpsc::sync_channel(1);
-            thread::spawn(move || {
-                let _ = worker.join();
-                let _ = tx.send(());
-            });
-            let _ = rx.recv_timeout(Duration::from_secs(2));
-        }
+        let _ = self.worker.take();
     }
 }
 
