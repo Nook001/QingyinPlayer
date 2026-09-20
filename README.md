@@ -33,14 +33,6 @@ cargo run -p qingyin-ui-bridge
 
 可设置 `RUST_LOG=qingyin=debug` 查看调试日志。
 
-指针假死排查：
-
-```bash
-QINGYIN_POINTER_DEBUG=1 cargo run -p qingyin-ui-bridge
-```
-
-终端和 `/tmp/qingyin-pointer.log` 会记下按钮按下/松开/点击，以及 `play_next` 等槽调用。若点了「下一首」但没有 `slot play_next`，事件没有到达 `AppBridge`。
-
 ## 仓库结构
 
 ```

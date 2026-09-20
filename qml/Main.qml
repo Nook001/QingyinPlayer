@@ -4,9 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Qingyin 1.0
-import "pointer.js" as Pointer
 
-// Pointer policy: see qml/pointer.js.
 // System chrome owns move/resize. Lists are ItemDelegate rows in a
 // ScrollView. Play and page switches are deferred with Qt.callLater.
 ApplicationWindow {
@@ -23,7 +21,6 @@ ApplicationWindow {
     property int currentView: 0
     property bool sidebarCollapsed: false
     property bool darkTheme: backend.dark_theme
-    readonly property bool pointerDebug: backend.pointer_debug_enabled()
 
     readonly property color backgroundColor: darkTheme ? "#151817" : "#F5F6F3"
     readonly property color surfaceColor: darkTheme ? "#1D2220" : "#FAFBF8"
@@ -56,11 +53,6 @@ ApplicationWindow {
 
     Component.onCompleted: {
         backend.restore_session()
-        Pointer.setDebug(window.pointerDebug, function(kind, target, extra) {
-            backend.log_pointer(kind, target, extra)
-        })
-        if (window.pointerDebug)
-            Pointer.hookButtons(window.contentItem)
     }
 
     onClosing: function(close) {
@@ -111,7 +103,6 @@ ApplicationWindow {
 
                     Button {
                         id: collapseButton
-                        objectName: "collapseSidebarButton"
 
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: 40
@@ -145,7 +136,6 @@ ApplicationWindow {
 
                     delegate: Button {
                         id: navigationButton
-                        objectName: "navigationButton-" + navigationButton.modelData.label
 
                         required property int index
                         required property var modelData
@@ -210,7 +200,6 @@ ApplicationWindow {
 
                 Button {
                     id: settingsButton
-                    objectName: "settingsButton"
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
@@ -270,8 +259,6 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 sourceComponent: [libraryPage, artistPage, albumPage, settingsPage][window.currentView]
-                onLoaded: if (window.pointerDebug)
-                    Pointer.hookButtons(window.contentItem)
             }
 
             PlayerBar {

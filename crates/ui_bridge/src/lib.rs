@@ -1,8 +1,6 @@
 mod collections;
 mod library_session;
 mod playback;
-#[allow(dead_code)]
-mod pointer_guard;
 
 use collections::TrackListModel;
 use cstr::cstr;
@@ -13,9 +11,7 @@ use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
 use std::cell::RefCell;
-use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::warn;
 
@@ -40,26 +36,6 @@ pub struct AppBridge {
         fn version(&self) -> QString {
             let _ = self;
             env!("CARGO_PKG_VERSION").into()
-        }
-    ),
-    pointer_debug_enabled: qt_method!(
-        fn pointer_debug_enabled(&self) -> bool {
-            let _ = self;
-            pointer_debug_from_env()
-        }
-    ),
-    log_pointer: qt_method!(
-        fn log_pointer(&self, kind: QString, target: QString, extra: QString) {
-            let _ = self;
-            let kind: String = kind.into();
-            let target: String = target.into();
-            let extra: String = extra.into();
-            pointer_trace(&kind, &format!("{target}  {extra}"));
-        }
-    ),
-    drop_pointer_grabs: qt_method!(
-        fn drop_pointer_grabs(&self) {
-            let _ = self;
         }
     ),
     set_dark_theme: qt_method!(
@@ -212,47 +188,6 @@ pub fn register_qml_types() {
     qml_register_type::<LibrarySession>(cstr!("Qingyin"), 1, 0, cstr!("LibrarySession"));
     qml_register_type::<TrackListModel>(cstr!("Qingyin"), 1, 0, cstr!("TrackListModel"));
     qml_register_type::<PlaybackController>(cstr!("Qingyin"), 1, 0, cstr!("PlaybackController"));
-}
-
-fn pointer_log_path() -> &'static PathBuf {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| std::env::temp_dir().join("qingyin-pointer.log"))
-}
-
-fn pointer_debug_from_env() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        let enabled = match std::env::var("QINGYIN_POINTER_DEBUG") {
-            Ok(value) => matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            ),
-            Err(_) => false,
-        };
-        if enabled {
-            eprintln!("[qingyin-pointer] writing {}", pointer_log_path().display());
-        }
-        enabled
-    })
-}
-
-pub(crate) fn pointer_trace(kind: &str, detail: &str) {
-    if !pointer_debug_from_env() {
-        return;
-    }
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_millis();
-    let line = format!("[qingyin-pointer] {millis}  {kind}  {detail}");
-    eprintln!("{line}");
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(pointer_log_path())
-    {
-        let _ = std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
-    }
 }
 
 fn format_music_folders(directories: &[PathBuf]) -> String {

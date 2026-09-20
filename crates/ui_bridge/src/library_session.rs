@@ -179,7 +179,6 @@ pub struct LibrarySession {
     ),
     play_track: qt_method!(
         fn play_track(&mut self, row: i32) {
-            crate::pointer_trace("slot", &format!("play_track row={row}"));
             let (tracks, covers) = self.library_model.borrow().snapshot();
             self.play_listed(tracks, covers, row);
         }
@@ -213,7 +212,6 @@ pub struct LibrarySession {
     ),
     play_artist_track: qt_method!(
         fn play_artist_track(&mut self, row: i32) {
-            crate::pointer_trace("slot", &format!("play_artist_track row={row}"));
             let (tracks, covers) = self.artist_detail.borrow().snapshot();
             self.play_listed(tracks, covers, row);
         }
@@ -230,7 +228,6 @@ pub struct LibrarySession {
     ),
     play_album_track: qt_method!(
         fn play_album_track(&mut self, row: i32) {
-            crate::pointer_trace("slot", &format!("play_album_track row={row}"));
             let (tracks, covers) = self.album_detail.borrow().snapshot();
             self.play_listed(tracks, covers, row);
         }

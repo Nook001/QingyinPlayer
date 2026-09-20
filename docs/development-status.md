@@ -97,7 +97,7 @@
 - [`Library.qml`](../qml/Library.qml) 可选择文件夹、显示扫描状态和真实曲目列表，顶部提供拼音搜索与排序。
 - [`PlayerBar.qml`](../qml/PlayerBar.qml) 已接通播放/暂停、上一首、下一首、进度拖动与音量。
 - 启动恢复和添加文件夹后会启动目录监听；运行期文件变化经工作线程增量写入 SQLite，再回到主线程刷新曲库、歌手和专辑。
-- Qt Widgets 壳实验已撤回：同样在 `play_*` 后指针假死，且 UX 不可接受。进程仍从 `qml/Main.qml` 启动。
+- 进程从 [`qml/Main.qml`](../qml/Main.qml) 启动。
 
 ## 已有骨架但未贯通
 

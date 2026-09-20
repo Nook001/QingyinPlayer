@@ -16,11 +16,6 @@ Item {
         && (root.session.searching
             || searchField.text.trim() !== String(root.session.search_query).trim())
 
-    onVisibleChanged: {
-        if (visible)
-            Qt.callLater(trackTable.clampScroll)
-    }
-
     Timer {
         id: searchDelay
         interval: 180
@@ -66,7 +61,6 @@ Item {
 
             Button {
                 id: addFolderButton
-                objectName: "addFolderButton"
 
                 Layout.preferredWidth: 112
                 Layout.preferredHeight: 38

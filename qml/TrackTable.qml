@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "pointer.js" as Pointer
 
 Item {
     id: root
@@ -13,15 +12,11 @@ Item {
     property bool sortable: true
     property string sortColumn
     property bool sortAscending: true
-    property string debugLabel: "tracks"
     readonly property alias count: trackRepeater.count
     readonly property int doubleClickMs: 400
 
     signal trackActivated(int row)
     signal sortRequested(string column)
-
-    function clampScroll() {
-    }
 
     function heading(label, column) {
         if (!root.sortable || root.sortColumn !== column)
@@ -48,7 +43,6 @@ Item {
 
             Button {
                 id: titleHeading
-                objectName: "sortTitleButton"
 
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
@@ -75,7 +69,6 @@ Item {
 
             Button {
                 id: albumHeading
-                objectName: "sortAlbumButton"
 
                 Layout.preferredWidth: 190
                 Layout.preferredHeight: 28
@@ -102,7 +95,6 @@ Item {
 
             Button {
                 id: durationHeading
-                objectName: "sortDurationButton"
 
                 Layout.preferredWidth: 48
                 Layout.preferredHeight: 28
@@ -163,7 +155,6 @@ Item {
                         padding: 0
                         hoverEnabled: true
                         text: trackRow.title
-                        objectName: root.debugLabel + "-" + trackRow.index
                         Accessible.name: trackRow.title
 
                         onIndexChanged: trackRow.lastClickAt = 0
@@ -244,7 +235,6 @@ Item {
                         }
 
                         onClicked: {
-                            Pointer.debug("clicked", trackRow.objectName, "row=" + trackRow.index)
                             const now = Date.now()
                             if (trackRow.lastClickAt !== 0 && (now - trackRow.lastClickAt) <= root.doubleClickMs) {
                                 trackRow.lastClickAt = 0

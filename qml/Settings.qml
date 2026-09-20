@@ -43,7 +43,6 @@ Item {
 
             Button {
                 id: lightThemeButton
-                objectName: "lightThemeButton"
 
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36
@@ -70,7 +69,6 @@ Item {
 
             Button {
                 id: darkThemeButton
-                objectName: "darkThemeButton"
 
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36

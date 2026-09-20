@@ -42,15 +42,12 @@ pub struct PlaybackController {
     playback_progress_changed: qt_signal!(),
     toggle_playback: qt_method!(
         fn toggle_playback(&mut self) {
-            crate::pointer_trace("slot", "toggle_playback");
             self.toggle_playback_internal();
         }
     ),
     play_previous: qt_method!(
         fn play_previous(&mut self) {
-            crate::pointer_trace("slot", "play_previous");
             let Some(current) = self.current_index else {
-                crate::pointer_trace("slot", "play_previous skipped: no current track");
                 return;
             };
             self.play_queue_row(i32::try_from(crate::previous_track_index(current)).unwrap_or(0));
@@ -58,7 +55,6 @@ pub struct PlaybackController {
     ),
     play_next: qt_method!(
         fn play_next(&mut self) {
-            crate::pointer_trace("slot", "play_next");
             self.play_next_internal();
         }
     ),

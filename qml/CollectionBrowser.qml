@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "pointer.js" as Pointer
 
 Item {
     id: root
@@ -24,11 +23,6 @@ Item {
 
     readonly property bool showingDetail: root.selectedName !== ""
 
-    onShowingDetailChanged: {
-        if (root.showingDetail)
-            Qt.callLater(function() { detailTable.clampScroll() })
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 34
@@ -40,7 +34,6 @@ Item {
 
             Button {
                 id: backButton
-                objectName: "collectionBackButton"
 
                 visible: root.showingDetail
                 Layout.preferredWidth: 40
@@ -151,7 +144,6 @@ Item {
                         padding: 8
                         hoverEnabled: true
                         text: collectionCard.name
-                        objectName: "card-" + collectionCard.index
                         Accessible.name: collectionCard.name
 
                         background: Rectangle {
@@ -206,7 +198,6 @@ Item {
                         }
 
                         onClicked: {
-                            Pointer.debug("clicked", collectionCard.objectName, collectionCard.name)
                             const row = collectionCard.index
                             Qt.callLater(function() { root.collectionOpened(row) })
                         }
@@ -223,7 +214,6 @@ Item {
             theme: root.theme
             trackModel: root.detailModel
             sortable: false
-            debugLabel: "detail"
             onTrackActivated: function(row) { root.trackActivated(row) }
         }
 

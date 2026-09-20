@@ -97,7 +97,6 @@ Rectangle {
 
             Button {
                 id: playPreviousButton
-                objectName: "playPreviousButton"
 
                 implicitWidth: 44
                 implicitHeight: 40
@@ -125,7 +124,6 @@ Rectangle {
 
             Button {
                 id: togglePlaybackButton
-                objectName: "togglePlaybackButton"
 
                 implicitWidth: 46
                 implicitHeight: 46
@@ -153,7 +151,6 @@ Rectangle {
 
             Button {
                 id: playNextButton
-                objectName: "playNextButton"
 
                 implicitWidth: 44
                 implicitHeight: 40
@@ -196,7 +193,6 @@ Rectangle {
 
             Slider {
                 id: progressSlider
-                objectName: "progressSlider"
 
                 Layout.fillWidth: true
                 from: 0
@@ -269,7 +265,6 @@ Rectangle {
 
         Slider {
             id: volumeSlider
-            objectName: "volumeSlider"
 
             Layout.fillWidth: true
             from: 0
