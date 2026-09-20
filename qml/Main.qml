@@ -262,7 +262,7 @@ ApplicationWindow {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 12
-                    width: Math.min(parent.width - 96, 600)
+                    width: Math.min(parent.width - 80, 720)
                     height: 80
                     theme: appTheme
                     playerBackend: backend.playback

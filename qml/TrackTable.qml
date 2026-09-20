@@ -15,6 +15,9 @@ Item {
     property real savedContentY: 0
     property int endSpacerCount: 3
     readonly property int rowHeight: 58
+    readonly property int indexWidth: 24
+    readonly property int albumWidth: 168
+    readonly property int durationWidth: 48
     readonly property alias count: trackList.count
     readonly property alias contentY: trackList.contentY
 
@@ -37,12 +40,14 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 22
-            spacing: 14
+            Layout.leftMargin: 4
+            Layout.rightMargin: 16
+            spacing: 10
 
             Text {
-                Layout.preferredWidth: 36
+                Layout.preferredWidth: root.indexWidth
+                Layout.minimumWidth: root.indexWidth
+                Layout.maximumWidth: root.indexWidth
                 text: "#"
                 color: root.theme.mutedTextColor
                 horizontalAlignment: Text.AlignRight
@@ -71,7 +76,7 @@ Item {
             }
 
             FlatButton {
-                Layout.preferredWidth: 190
+                Layout.preferredWidth: root.albumWidth
                 preferredHeight: 28
                 theme: root.theme
                 enabled: root.sortable
@@ -84,7 +89,7 @@ Item {
             }
 
             FlatButton {
-                Layout.preferredWidth: 48
+                Layout.preferredWidth: root.durationWidth
                 preferredHeight: 28
                 theme: root.theme
                 enabled: root.sortable
@@ -147,12 +152,14 @@ Item {
 
                     contentItem: RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 22
-                        spacing: 14
+                        anchors.leftMargin: 4
+                        anchors.rightMargin: 16
+                        spacing: 10
 
                         Text {
-                            Layout.preferredWidth: 36
+                            Layout.preferredWidth: root.indexWidth
+                            Layout.minimumWidth: root.indexWidth
+                            Layout.maximumWidth: root.indexWidth
                             text: String(trackRow.index + 1)
                             color: root.theme.mutedTextColor
                             horizontalAlignment: Text.AlignRight
@@ -192,7 +199,7 @@ Item {
                         }
 
                         Text {
-                            Layout.preferredWidth: 190
+                            Layout.preferredWidth: root.albumWidth
                             text: trackRow.album
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
@@ -200,7 +207,7 @@ Item {
                         }
 
                         Text {
-                            Layout.preferredWidth: 48
+                            Layout.preferredWidth: root.durationWidth
                             text: trackRow.duration
                             color: root.theme.mutedTextColor
                             horizontalAlignment: Text.AlignRight
