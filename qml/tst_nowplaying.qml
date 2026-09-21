@@ -115,6 +115,38 @@ Item {
             mouseWheel(list, 100, 100, 0, -120)
             tryCompare(loader.item, "following", false)
         }
+        function viewportY(list, index) {
+            list.forceLayout()
+            waitForRendering(list)
+            const item = list.itemAtIndex(index)
+            verify(item !== null, "missing lyric " + index)
+            return item.mapToItem(list, 0, 0).y
+        }
+        function test_follow_does_not_drift() {
+            const lines = []
+            for (let i = 0; i < 40; ++i)
+                lines.push({time: i * 1000, text: "第 " + i + " 行\nTake those shots then I"})
+            player.lyrics = lines
+            player.playback_position = 20500
+            const page = loader.item
+            const list = findChild(page, "lyricsList")
+            tryCompare(page, "activeLine", 20)
+            page.followDuration = 0
+            waitForRendering(list)
+            page.followCurrent()
+            waitForRendering(list)
+            const first = viewportY(list, 20)
+            for (let i = 0; i < 15; ++i) {
+                page.followCurrent()
+                wait(20)
+            }
+            waitForRendering(list)
+            const second = viewportY(list, 20)
+            fuzzyCompare(second, first, 3)
+            const current = list.itemAtIndex(20)
+            const center = (list.height - current.height) / 2
+            fuzzyCompare(second, center, 8)
+        }
         function test_header_icon_buttons() {
             const back = findChild(loader.item, "nowPlayingBack")
             compare(back.iconName, "chevronLeft")

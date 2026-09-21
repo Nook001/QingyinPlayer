@@ -388,12 +388,21 @@ pub struct PlaybackController {
     lyrics_error: qt_property!(QString; NOTIFY lyrics_changed),
     lyrics_changed: qt_signal!(),
     lyrics_visible: bool,
+    capsule_active: bool,
     lyrics_worker_running: bool,
     lyrics_generation: Option<LoadGeneration>,
     set_lyrics_visible: qt_method!(
         fn set_lyrics_visible(&mut self, visible: bool) {
             self.lyrics_visible = visible;
             if visible {
+                self.load_lyrics();
+            }
+        }
+    ),
+    set_capsule_active: qt_method!(
+        fn set_capsule_active(&mut self, active: bool) {
+            self.capsule_active = active;
+            if active {
                 self.load_lyrics();
             }
         }
@@ -589,9 +598,9 @@ impl PlaybackController {
         self.lyrics_generation = None;
         self.lyrics_synchronized = false;
         self.lyrics_error = QString::default();
-        self.lyrics_loading = self.lyrics_visible;
+        self.lyrics_loading = self.lyrics_visible || self.capsule_active;
         self.lyrics_changed();
-        if self.lyrics_visible {
+        if self.lyrics_visible || self.capsule_active {
             self.load_lyrics();
         }
     }
@@ -638,7 +647,7 @@ impl PlaybackController {
     ) {
         self.lyrics_worker_running = false;
         if generation != self.engine.generation {
-            if self.lyrics_visible {
+            if self.lyrics_visible || self.capsule_active {
                 self.load_lyrics();
             }
             return;

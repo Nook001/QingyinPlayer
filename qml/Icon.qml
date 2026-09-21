@@ -61,6 +61,14 @@ Item {
             return "M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"
         case "repeatOne":
             return "M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3M11 10h1v4"
+        case "windowMinimize":
+            return "M5 12h14"
+        case "windowMaximize":
+            return "M5 5h14v14H5z"
+        case "windowRestore":
+            return "M8 5h11v11M5 8h11v11H5z"
+        case "capsule":
+            return "M8 7h8a5 5 0 0 1 0 10H8A5 5 0 0 1 8 7zM8 10v4"
         case "expand":
             return "M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"
         case "minimize":

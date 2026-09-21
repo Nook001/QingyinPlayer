@@ -28,7 +28,9 @@ fn local_lyrics_and_audio_info_share_the_playback_session() {
     let data_size = (wav.len() - 44) as u32;
     wav[4..8].copy_from_slice(&(36 + data_size).to_le_bytes());
     wav[40..44].copy_from_slice(&data_size.to_le_bytes());
-    std::fs::write(music.join("夜曲.wav"), wav).unwrap();
+    std::fs::write(music.join("夜曲.wav"), &wav).unwrap();
+    std::fs::write(music.join("zz-next.wav"), &wav).unwrap();
+    std::fs::write(music.join("zz-next.lrc"), "[00:00.00]胶囊中的下一首").unwrap();
     std::fs::write(
         music.join("夜曲.lrc"),
         "[00:00.00]晚风吹过安静的街道\n[00:01.00]灯光映在你的眼里\n[00:10.00]让这一首歌慢慢播放",

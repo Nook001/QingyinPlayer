@@ -12,6 +12,7 @@ Item {
 
     signal revealTrackRequested(int trackId)
     signal nowPlayingRequested()
+    signal capsuleRequested()
 
     focus: true
 
@@ -316,6 +317,22 @@ Item {
             color: root.theme.mutedTextColor
             font.pixelSize: 11
         }
+    }
+
+    FlatButton {
+        objectName: "enterCapsule"
+        anchors.right: volumeCluster.left
+        anchors.rightMargin: 4
+        anchors.verticalCenter: parent.verticalCenter
+        preferredWidth: 30
+        preferredHeight: 36
+        theme: root.theme
+        iconName: "capsule"
+        iconSize: 18
+        Accessible.name: "切换胶囊模式"
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        onClicked: root.capsuleRequested()
     }
 
     Item {

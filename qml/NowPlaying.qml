@@ -35,7 +35,7 @@ Item {
         followAnim.stop()
         lyricsList.forceLayout()
         if (root.activeLine < 0) {
-            root.animateContentY(0)
+            root.animateContentY(lyricsList.originY)
             return
         }
         const item = lyricsList.itemAtIndex(root.activeLine)
@@ -43,9 +43,10 @@ Item {
             lyricsList.positionViewAtIndex(root.activeLine, ListView.Center)
             return
         }
-        const target = item.y + lyricsList.originY - (lyricsList.height - item.height) / 2
-        const maxY = Math.max(0, lyricsList.contentHeight - lyricsList.height)
-        root.animateContentY(Math.max(0, Math.min(maxY, target)))
+        const target = item.y - (lyricsList.height - item.height) / 2
+        const minY = lyricsList.originY
+        const maxY = minY + Math.max(0, lyricsList.contentHeight - lyricsList.height)
+        root.animateContentY(Math.max(minY, Math.min(maxY, target)))
     }
 
     function animateContentY(value) {

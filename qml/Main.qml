@@ -15,13 +15,55 @@ ApplicationWindow {
     minimumHeight: 600
     visible: true
     title: backend.application_name()
-    color: appTheme.backgroundColor
+    flags: Qt.Window | Qt.FramelessWindowHint
+    color: "transparent"
 
     function qingyinRootLoaded() {
         return true
     }
 
     signal revealTrack(int trackId)
+
+    property bool capsuleMode: false
+    property int previousVisibility: Window.Windowed
+
+    function updatePlaybackVisibility() {
+        backend.playback.set_ui_visible(
+            (window.visible && window.visibility !== Window.Minimized)
+            || (capsuleWindow.visible && capsuleWindow.visibility !== Window.Minimized))
+    }
+
+    function enterCapsule() {
+        if (capsuleMode) return
+        previousVisibility = window.visibility
+        capsuleMode = true
+        backend.playback.set_capsule_active(true)
+        nowPlayingLoader.active = false
+        capsuleWindow.show()
+        window.hide()
+        capsuleWindow.requestActivate()
+        updatePlaybackVisibility()
+    }
+
+    function restoreWindow() {
+        if (!capsuleMode) return
+        window.visibility = previousVisibility
+        capsuleMode = false
+        if (currentView === 2) nowPlayingLoader.active = true
+        capsuleWindow.hide()
+        backend.playback.set_capsule_active(false)
+        window.requestActivate()
+        updatePlaybackVisibility()
+    }
+
+    CapsuleWindow {
+        id: capsuleWindow
+        objectName: "capsuleWindow"
+        theme: appTheme
+        playerBackend: backend.playback
+        onRestoreRequested: window.restoreWindow()
+        onActivityChanged: Qt.callLater(window.updatePlaybackVisibility)
+    }
 
     property int currentView: 0
     property bool wasMaximized: false
@@ -35,7 +77,7 @@ ApplicationWindow {
     }
 
     onCurrentViewChanged: {
-        if (window.currentView === 2)
+        if (window.currentView === 2 && !window.capsuleMode)
             nowPlayingLoader.active = true
     }
 
@@ -51,12 +93,12 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Escape"
-        enabled: window.currentView === 2
+        enabled: window.visible && !window.capsuleMode && window.currentView === 2
         onActivated: window.leaveNowPlaying()
     }
     Shortcut {
         sequence: "F11"
-        enabled: window.currentView === 2
+        enabled: window.visible && !window.capsuleMode
         onActivated: window.toggleFullscreen()
     }
     property bool darkTheme: backend.dark_theme
@@ -85,6 +127,7 @@ ApplicationWindow {
 
     AppBridge {
         id: backend
+        objectName: "appBackend"
     }
 
     Component.onCompleted: backend.restore_session()
@@ -96,22 +139,29 @@ ApplicationWindow {
         Qt.quit()
     }
 
-    onVisibilityChanged: function(visibility) {
-        backend.playback.set_ui_visible(
-            visibility !== Window.Minimized && visibility !== Window.Hidden)
-    }
+    onVisibilityChanged: Qt.callLater(window.updatePlaybackVisibility)
 
     font.family: "Noto Sans CJK SC"
 
     Shortcut {
         sequence: "Space"
-        enabled: !(window.activeFocusItem instanceof TextInput)
+        enabled: window.visible && !window.capsuleMode
+            && !(window.activeFocusItem instanceof TextInput)
             && !(window.activeFocusItem instanceof TextEdit)
             && !(window.activeFocusItem instanceof AbstractButton)
         onActivated: backend.playback.toggle_playback()
     }
 
+    WindowFrame {
+        id: windowFrame
+        objectName: "mainWindowFrame"
+        anchors.fill: parent
+        theme: appTheme
+        windowHandle: window
+    }
+
     Item {
+        parent: windowFrame.contentItem
         anchors.fill: parent
 
         Item {
@@ -120,12 +170,14 @@ ApplicationWindow {
 
             Loader {
                 id: pageLoader
+                objectName: "libraryPageLoader"
                 anchors.fill: parent
                 sourceComponent: window.currentView === 1 ? settingsPage : libraryPage
             }
 
             Loader {
                 id: nowPlayingLoader
+                objectName: "nowPlayingLoader"
                 anchors.fill: parent
                 z: 1
                 active: false
@@ -166,7 +218,7 @@ ApplicationWindow {
                 textureSize: Qt.size(
                     Math.max(1, Math.round(playerBar.width / 4)),
                     Math.max(1, Math.round(playerBar.height / 4)))
-                live: true
+                live: window.visible && !window.capsuleMode
                 hideSource: false
                 recursive: false
                 visible: false
@@ -211,6 +263,7 @@ ApplicationWindow {
             height: 80
             theme: appTheme
             playerBackend: backend.playback
+            onCapsuleRequested: window.enterCapsule()
             onNowPlayingRequested: {
                 nowPlayingLoader.active = true
                 window.currentView = 2

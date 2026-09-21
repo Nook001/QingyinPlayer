@@ -131,6 +131,7 @@ Module {
         Property { name: "lyrics_error"; type: "QString"; notify: "lyrics_changed" }
         Signal { name: "track_details_changed" }
         Signal { name: "lyrics_changed" }
+        Method { name: "set_capsule_active"; Parameter { name: "active"; type: "bool" } }
         Method { name: "set_lyrics_visible"; Parameter { name: "visible"; type: "bool" } }
         Property { name: "current_title"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_artist"; type: "QString"; notify: "playback_changed" }
