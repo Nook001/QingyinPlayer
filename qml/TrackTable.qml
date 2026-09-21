@@ -19,7 +19,7 @@ Item {
     property real savedContentY: 0
     property int endSpacerCount: 3
     readonly property int rowHeight: 58
-    readonly property int indexWidth: 24
+    readonly property int indexWidth: 28
     readonly property int albumWidth: 168
     readonly property int durationWidth: 48
     readonly property alias count: trackList.count
@@ -111,8 +111,8 @@ Item {
                 enabled: root.sortable
                 contentAlignment: Text.AlignLeft
                 fontPixelSize: 12
-                text: root.heading("歌曲", "title")
-                Accessible.name: "按歌曲名排序"
+                text: root.heading("标题", "title")
+                Accessible.name: "按标题排序"
                 onClicked: if (root.sortable)
                     root.sortRequested("title")
             }
@@ -214,8 +214,9 @@ Item {
                             Layout.preferredWidth: root.indexWidth
                             Layout.preferredHeight: 32
                             Text {
+                                objectName: "rowIndex" + trackRow.trackId
                                 anchors.centerIn: parent
-                                text: String(trackRow.index + 1)
+                                text: String(trackRow.index + 1).padStart(2, "0")
                                 color: trackRow.isCurrent ? root.theme.accentColor : root.theme.mutedTextColor
                                 font.pixelSize: 12
                             }

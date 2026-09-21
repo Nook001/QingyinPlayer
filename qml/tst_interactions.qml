@@ -96,6 +96,7 @@ Item {
         function test_selection_keyboard_and_reorder() {
             const row = findChild(table, "trackRow2")
             verify(row)
+            compare(findChild(table, "rowIndex2").text, "01")
             root.activatedId = 0
             mouseClick(row, row.width / 2, row.height / 2)
             compare(table.selectedTrackId, 2)

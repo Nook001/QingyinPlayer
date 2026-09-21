@@ -164,11 +164,23 @@ Item {
             Layout.fillWidth: true
             spacing: 10
 
-            Text {
-                text: "曲库"
-                color: root.theme.textColor
-                font.pixelSize: 28
-                font.weight: Font.DemiBold
+            RowLayout {
+                spacing: 8
+                Layout.alignment: Qt.AlignVCenter
+
+                Icon {
+                    Layout.alignment: Qt.AlignVCenter
+                    name: "library"
+                    size: 26
+                    color: root.theme.textColor
+                }
+
+                Text {
+                    text: "曲库"
+                    color: root.theme.textColor
+                    font.pixelSize: 28
+                    font.weight: Font.DemiBold
+                }
             }
 
             Text {
@@ -189,6 +201,7 @@ Item {
             FlatButton {
                 theme: root.theme
                 text: "添加目录"
+                filled: true
                 fontPixelSize: 13
                 contentAlignment: Text.AlignHCenter
                 preferredWidth: 108
@@ -200,6 +213,7 @@ Item {
             FlatButton {
                 objectName: "librarySettingsButton"
                 theme: root.theme
+                filled: true
                 preferredWidth: 32
                 preferredHeight: 32
                 iconName: "settings"

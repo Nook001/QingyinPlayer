@@ -14,6 +14,7 @@ Button {
     property int fontPixelSize: 16
     property int contentAlignment: Text.AlignLeft
     property bool emphasized: false
+    property bool filled: false
 
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
@@ -58,12 +59,18 @@ Button {
             anchors.centerIn: parent
             width: root.emphasized ? Math.min(parent.width, parent.height) : parent.width
             height: root.emphasized ? width : parent.height
-            radius: root.emphasized ? width / 2 : 6
+            radius: root.emphasized || root.filled ? Math.min(width, height) / 2 : 6
+            borderWidth: root.filled ? 1 : 0
+            borderColor: root.theme.dividerColor
             color: {
                 if (root.emphasized && root.enabled)
                     return root.down ? root.theme.accentPressedColor : root.theme.accentColor
+                if (root.filled && root.enabled && root.down)
+                    return root.theme.subtleColor
                 if (root.hovered && root.enabled)
                     return root.theme.hoverColor
+                if (root.filled)
+                    return root.theme.fieldColor
                 return "transparent"
             }
         }

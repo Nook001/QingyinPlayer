@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Effects
-import QtQuick.Shapes
 import QtQuick.Window
 
 Item {
@@ -32,10 +31,12 @@ Item {
     width: root.displaySize
     height: root.displaySize
 
-    RoundedRect {
+    Rectangle {
         anchors.fill: parent
         color: root.theme.artworkColor
         radius: root.cornerRadius
+        antialiasing: true
+        visible: cover.status !== Image.Ready
     }
 
     Image {
@@ -51,27 +52,18 @@ Item {
         visible: false
     }
 
-    Shape {
+    Item {
         id: coverMask
         anchors.fill: parent
         visible: false
-        preferredRendererType: Shape.CurveRenderer
-        antialiasing: true
         layer.enabled: true
         layer.smooth: true
-        layer.textureSize: Qt.size(
-            Math.max(1, Math.round(width * root.dpr)),
-            Math.max(1, Math.round(height * root.dpr)))
 
-        ShapePath {
-            fillColor: "#FFFFFF"
-            strokeWidth: 0
-
-            PathRectangle {
-                width: coverMask.width
-                height: coverMask.height
-                radius: Math.min(root.cornerRadius, coverMask.width / 2, coverMask.height / 2)
-            }
+        Rectangle {
+            anchors.fill: parent
+            radius: root.cornerRadius
+            color: "#FFFFFF"
+            antialiasing: true
         }
     }
 
@@ -80,8 +72,9 @@ Item {
         source: cover
         maskEnabled: true
         maskSource: coverMask
-        maskThresholdMin: 0.35
-        maskSpreadAtMin: 0.15
+        autoPaddingEnabled: false
+        maskThresholdMin: 0.5
+        maskSpreadAtMin: 1.0
         visible: cover.status === Image.Ready
     }
 
@@ -98,10 +91,11 @@ Item {
         anchors.fill: parent
         visible: root.overlayVisible && root.overlayIcon !== ""
 
-        RoundedRect {
+        Rectangle {
             anchors.fill: parent
             radius: root.cornerRadius
             color: "#6B000000"
+            antialiasing: true
         }
 
         Icon {
