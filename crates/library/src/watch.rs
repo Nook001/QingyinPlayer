@@ -254,7 +254,7 @@ pub fn watch_directories(
                                 roots: worker_status.clone(),
                                 ..WatchSummary::default()
                             };
-                            on_batch(build_watch_snapshot(&database_path, summary));
+                            on_batch(build_watch_snapshot(&database_path, &worker_roots, summary));
                         }
                         poll_failed = false;
                         retry_wait = INITIAL_RETRY;
@@ -279,7 +279,7 @@ pub fn watch_directories(
                         overflow = false;
                     }
                     if !summary.is_empty() || summary.needs_reconcile {
-                        on_batch(build_watch_snapshot(&database_path, summary));
+                        on_batch(build_watch_snapshot(&database_path, &worker_roots, summary));
                     }
                     quiet_deadline = None;
                     max_deadline = None;
@@ -348,7 +348,11 @@ fn apply_paths(database_path: &Path, roots: &[PathBuf], paths: &[PathBuf]) -> Wa
     summary
 }
 
-fn build_watch_snapshot(database_path: &Path, summary: WatchSummary) -> WatchSnapshot {
+fn build_watch_snapshot(
+    database_path: &Path,
+    roots: &[PathBuf],
+    summary: WatchSummary,
+) -> WatchSnapshot {
     let covers = CoverService::open_default().ok();
     let mut tracks = Vec::new();
     if let Ok(database) = Database::open_migrated(database_path)
@@ -372,7 +376,7 @@ fn build_watch_snapshot(database_path: &Path, summary: WatchSummary) -> WatchSna
     }
     let artists = aggregate_artists(&tracks);
     let albums = aggregate_albums(&tracks);
-    let directories = aggregate_directories(&tracks);
+    let directories = aggregate_directories(&tracks, roots);
     WatchSnapshot {
         summary,
         tracks,

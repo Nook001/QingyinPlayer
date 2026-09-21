@@ -215,18 +215,15 @@ pub fn aggregate_albums(tracks: &[TrackSnapshot]) -> Vec<CollectionEntry> {
     finish_collections(groups, CollectionKind::Album)
 }
 
-/// Groups tracks by their immediate containing directory, preserving filesystem identity.
+/// Groups tracks under the library roots that contain them, collapsing nested folders.
 #[must_use]
-pub fn aggregate_directories(tracks: &[TrackSnapshot]) -> Vec<CollectionEntry> {
+pub fn aggregate_directories(tracks: &[TrackSnapshot], roots: &[PathBuf]) -> Vec<CollectionEntry> {
     let mut groups = HashMap::<PathBuf, Vec<TrackSnapshot>>::new();
     for track in tracks {
-        let Some(directory) = track.metadata.path.parent() else {
+        let Some(directory) = containing_root(&track.metadata.path, roots) else {
             continue;
         };
-        groups
-            .entry(directory.to_path_buf())
-            .or_default()
-            .push(track.clone());
+        groups.entry(directory).or_default().push(track.clone());
     }
     let mut entries = groups
         .into_iter()
@@ -789,6 +786,14 @@ fn is_nested_under(path: &Path, root: &Path) -> bool {
     path != root && path.starts_with(root)
 }
 
+fn containing_root(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    roots
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.as_os_str().len())
+        .cloned()
+}
+
 fn scan_failure(path: PathBuf, message: String) -> ScanFailure {
     ScanFailure { path, message }
 }
@@ -1006,7 +1011,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn directory_groups_keep_exact_parents_and_shared_tracks() {
+    fn directory_groups_collapse_nested_folders_into_library_roots() {
         let tracks = snapshots_with_covers(
             vec![
                 test_track("B", None, vec![], "/music/Live/b.flac"),
@@ -1014,25 +1019,38 @@ mod tests {
                 test_track("C", None, vec![], "/other/Live/c.flac"),
                 test_track("D", None, vec![], "/music/live/d.flac"),
                 test_track("E", None, vec![], "/music/Live/Disc 2/e.flac"),
+                test_track("F", None, vec![], "/unlisted/alone/f.flac"),
             ],
-            &["cover-b", "", "", "", ""],
+            &["cover-b", "", "", "", "", ""],
         );
-        let directories = aggregate_directories(&tracks);
-        assert_eq!(directories.len(), 4);
-        let live = directories
+        let roots = [PathBuf::from("/music"), PathBuf::from("/other")];
+        let directories = aggregate_directories(&tracks, &roots);
+        assert_eq!(directories.len(), 2);
+        let music = directories
             .iter()
-            .find(|entry| entry.id == "directory:/music/Live")
+            .find(|entry| entry.id == "directory:/music")
             .unwrap();
-        assert_eq!(live.name, "Live");
-        assert_eq!(live.track_count, 2);
-        assert_eq!(live.subtitle, "2 首歌曲 · /music/Live");
-        assert_eq!(live.cover_url, "cover-b");
-        assert_eq!(live.tracks[0].metadata.title, "A");
-        assert!(Arc::ptr_eq(&live.tracks[0].metadata, &tracks[1].metadata));
+        assert_eq!(music.name, "music");
+        assert_eq!(music.track_count, 4);
+        assert_eq!(music.subtitle, "4 首歌曲 · /music");
+        assert_eq!(music.cover_url, "cover-b");
+        assert_eq!(music.tracks[0].metadata.title, "A");
+        assert!(Arc::ptr_eq(&music.tracks[0].metadata, &tracks[1].metadata));
+        let other = directories
+            .iter()
+            .find(|entry| entry.id == "directory:/other")
+            .unwrap();
+        assert_eq!(other.name, "other");
+        assert_eq!(other.track_count, 1);
+        assert!(
+            directories
+                .iter()
+                .all(|entry| entry.id != "directory:/unlisted")
+        );
         let mut reversed = tracks.clone();
         reversed.reverse();
-        assert_eq!(directories, aggregate_directories(&reversed));
-        assert!(aggregate_directories(&[]).is_empty());
+        assert_eq!(directories, aggregate_directories(&reversed, &roots));
+        assert!(aggregate_directories(&[], &roots).is_empty());
     }
 
     #[test]

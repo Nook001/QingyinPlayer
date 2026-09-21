@@ -1101,7 +1101,7 @@ fn restore_library(
     if can_prune {
         prune_unwatched_tracks(&mut database, roots).map_err(LibraryIoError::Prune)?;
     }
-    load_snapshot(&database, "已恢复", roots_generation)
+    load_snapshot(&database, "已恢复", roots, roots_generation)
 }
 
 fn scan_library(
@@ -1145,6 +1145,7 @@ fn scan_library(
     let mut snapshot = load_snapshot(
         &database,
         &format!("扫描完成：导入 {imported} 首，跳过 {unchanged} 首，失败 {failed} 首"),
+        roots,
         roots_generation,
     )?;
     if let Some(service) = &covers {
@@ -1155,7 +1156,7 @@ fn scan_library(
         }
         snapshot.artists = aggregate_artists(&snapshot.tracks);
         snapshot.albums = aggregate_albums(&snapshot.tracks);
-        snapshot.directories = aggregate_directories(&snapshot.tracks);
+        snapshot.directories = aggregate_directories(&snapshot.tracks, roots);
     }
     Ok(snapshot)
 }
@@ -1163,6 +1164,7 @@ fn scan_library(
 fn load_snapshot(
     database: &Database,
     status: &str,
+    roots: &[PathBuf],
     roots_generation: u64,
 ) -> Result<LibrarySnapshot, LibraryIoError> {
     let covers = CoverService::open_default().ok();
@@ -1181,7 +1183,7 @@ fn load_snapshot(
     };
     let artists = aggregate_artists(&tracks);
     let albums = aggregate_albums(&tracks);
-    let directories = aggregate_directories(&tracks);
+    let directories = aggregate_directories(&tracks, roots);
     Ok(LibrarySnapshot {
         tracks,
         artists,
@@ -1253,7 +1255,12 @@ mod tests {
         session.set_host(move |event| {
             tx.send(event).unwrap();
         });
-        session.apply_collections(Vec::new(), Vec::new(), aggregate_directories(&tracks));
+        let roots = [PathBuf::from("/music/one"), PathBuf::from("/music/two")];
+        session.apply_collections(
+            Vec::new(),
+            Vec::new(),
+            aggregate_directories(&tracks, &roots),
+        );
         session.open_directory("directory:/music/one".into());
         assert_eq!(session.selected_directory.to_string(), "one");
         session.play_directory_track(1);
@@ -1267,7 +1274,11 @@ mod tests {
         assert_eq!(track_id, 1);
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].id(), 1);
-        session.apply_collections(Vec::new(), Vec::new(), aggregate_directories(&tracks[1..]));
+        session.apply_collections(
+            Vec::new(),
+            Vec::new(),
+            aggregate_directories(&tracks[1..], &roots),
+        );
         assert!(session.selected_directory.is_empty());
         assert!(session.directory_detail.borrow().snapshot().is_empty());
     }

@@ -371,8 +371,11 @@ mod tests {
             1
         );
 
-        model.reset(qingyin_library::aggregate_directories(&tracks));
-        model.set_filter("/music/live");
+        model.reset(qingyin_library::aggregate_directories(
+            &tracks,
+            &[std::path::PathBuf::from("/music")],
+        ));
+        model.set_filter("/music");
         assert_eq!(model.row_count(), 1);
         model.set_filter("歌曲");
         assert_eq!(model.row_count(), 0);
