@@ -21,4 +21,6 @@ QtObject {
     readonly property color subtleColor: root.darkTheme ? "#29312E" : "#E4ECE7"
     readonly property color artworkColor: root.darkTheme ? "#312D29" : "#E8E3DA"
     readonly property color hoverColor: root.darkTheme ? "#2A302E" : "#EDF0EC"
+    readonly property color glassColor: root.darkTheme ? "#B31D2220" : "#B3FAFBF8"
+    readonly property color scrimColor: root.darkTheme ? "#73000000" : "#2E000000"
 }

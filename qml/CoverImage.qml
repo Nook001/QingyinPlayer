@@ -84,12 +84,18 @@ Item {
         size: Math.max(14, Math.round(root.displaySize / 2.4))
         color: root.theme.accentColor
         visible: cover.status !== Image.Ready
-            && !(root.overlayVisible && root.overlayIcon !== "")
+            && overlayLayer.opacity < 0.08
     }
 
     Item {
+        id: overlayLayer
+        objectName: "coverOverlay"
         anchors.fill: parent
-        visible: root.overlayVisible && root.overlayIcon !== ""
+        opacity: root.overlayVisible && root.overlayIcon !== "" ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity {
+            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -103,6 +109,10 @@ Item {
             name: root.overlayIcon
             size: root.overlayIconSize
             color: "#FFFFFF"
+            scale: root.overlayVisible ? 1 : 0.86
+            Behavior on scale {
+                NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+            }
         }
     }
 }

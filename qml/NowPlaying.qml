@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import QtQuick.Layouts
 
 Item {
@@ -12,6 +13,8 @@ Item {
     signal backRequested()
     signal fullscreenRequested()
     property bool following: true
+    property int followDuration: 260
+    property bool pageAlive: true
     readonly property var lines: playerBackend.lyrics
     readonly property bool synced: playerBackend.lyrics_synchronized
     readonly property int activeLine: {
@@ -27,25 +30,114 @@ Item {
     }
 
     function followCurrent() {
-        if (!following) return
-        if (activeLine < 0) {
-            lyricsList.positionViewAtBeginning()
+        if (!root.pageAlive || !root.following || !lyricsList || lyricsList.moving)
+            return
+        followAnim.stop()
+        lyricsList.forceLayout()
+        if (root.activeLine < 0) {
+            root.animateContentY(0)
             return
         }
-        lyricsList.forceLayout()
-        lyricsList.positionViewAtIndex(activeLine, ListView.Center)
+        const item = lyricsList.itemAtIndex(root.activeLine)
+        if (!item) {
+            lyricsList.positionViewAtIndex(root.activeLine, ListView.Center)
+            return
+        }
+        const target = item.y + lyricsList.originY - (lyricsList.height - item.height) / 2
+        const maxY = Math.max(0, lyricsList.contentHeight - lyricsList.height)
+        root.animateContentY(Math.max(0, Math.min(maxY, target)))
     }
-    onActiveLineChanged: Qt.callLater(root.followCurrent)
+
+    function animateContentY(value) {
+        if (!root.pageAlive || !lyricsList)
+            return
+        if (Math.abs(lyricsList.contentY - value) < 1 || root.followDuration <= 0) {
+            lyricsList.contentY = value
+            return
+        }
+        followAnim.to = value
+        followAnim.duration = root.followDuration
+        followAnim.start()
+    }
+
+    onActiveLineChanged: Qt.callLater(() => { if (root.pageAlive) root.followCurrent() })
     onLinesChanged: {
+        if (!root.pageAlive)
+            return
         following = true
+        followAnim.stop()
+        root.followDuration = 0
         lyricsList.positionViewAtBeginning()
-        Qt.callLater(root.followCurrent)
+        Qt.callLater(() => {
+            if (!root.pageAlive)
+                return
+            root.followDuration = 260
+            root.followCurrent()
+        })
     }
     Component.onCompleted: {
         playerBackend.set_lyrics_visible(true)
-        Qt.callLater(root.followCurrent)
+        Qt.callLater(() => { if (root.pageAlive) root.followCurrent() })
     }
-    Component.onDestruction: playerBackend.set_lyrics_visible(false)
+    Component.onDestruction: {
+        pageAlive = false
+        followAnim.stop()
+        playerBackend.set_lyrics_visible(false)
+    }
+
+    NumberAnimation {
+        id: followAnim
+        target: lyricsList
+        property: "contentY"
+        easing.type: Easing.OutCubic
+    }
+
+    Item {
+        id: backdrop
+        anchors.fill: parent
+        z: -1
+
+        Image {
+            id: backCover
+            width: 96
+            height: 96
+            visible: false
+            asynchronous: true
+            cache: true
+            fillMode: Image.PreserveAspectCrop
+            source: root.playerBackend.current_cover
+        }
+
+        MultiEffect {
+            anchors.fill: parent
+            source: backCover
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 48
+            brightness: root.theme.darkTheme ? -0.32 : -0.12
+            saturation: 0.4
+            autoPaddingEnabled: false
+            visible: backCover.status === Image.Ready
+            opacity: backCover.status === Image.Ready ? 1 : 0
+            Behavior on opacity {
+                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: root.theme.backgroundColor
+            opacity: backCover.status === Image.Ready ? 0.28 : 1
+            Behavior on opacity {
+                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: root.theme.scrimColor
+        }
+    }
 
     RowLayout {
         id: header
@@ -56,6 +148,7 @@ Item {
         FlatButton {
             objectName: "nowPlayingBack"
             theme: root.theme
+            filled: true
             text: "返回曲库"
             preferredWidth: 88
             onClicked: root.backRequested()
@@ -63,6 +156,7 @@ Item {
         Item { Layout.fillWidth: true }
         FlatButton {
             theme: root.theme
+            filled: true
             text: root.fullscreen ? "退出全屏" : "全屏"
             preferredWidth: 80
             contentAlignment: Text.AlignHCenter
@@ -133,12 +227,18 @@ Item {
                 spacing: 14
                 header: Item { height: root.synced ? Math.max(0, lyricsList.height / 2 - 32) : 0 }
                 footer: Item { height: root.synced ? Math.max(0, lyricsList.height / 2 - 32) : 0 }
-                onHeightChanged: Qt.callLater(root.followCurrent)
+                onHeightChanged: Qt.callLater(() => { if (root.pageAlive) root.followCurrent() })
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
-                onMovementStarted: root.following = false
+                onMovementStarted: {
+                    followAnim.stop()
+                    root.following = false
+                }
                 ScrollBar.vertical: ScrollBar {
-                    onPressedChanged: if (pressed) root.following = false
+                    onPressedChanged: if (pressed) {
+                        followAnim.stop()
+                        root.following = false
+                    }
                 }
                 delegate: ItemDelegate {
                     id: lineDelegate
@@ -147,12 +247,21 @@ Item {
                     width: lyricsList.width - 14
                     padding: 12
                     hoverEnabled: root.synced
+                    transformOrigin: Item.Center
+                    scale: lineDelegate.index === root.activeLine ? 1.04 : 1
+                    opacity: lineDelegate.index === root.activeLine ? 1 : 0.72
                     Accessible.name: modelData.text
+                    Behavior on scale {
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    }
                     onClicked: {
                         if (modelData.time >= 0) {
                             root.playerBackend.seek_to(modelData.time)
                             root.following = true
-                            Qt.callLater(root.followCurrent)
+                            Qt.callLater(() => { if (root.pageAlive) root.followCurrent() })
                         }
                     }
                     contentItem: Text {
@@ -162,6 +271,9 @@ Item {
                             ? root.theme.accentColor : root.theme.mutedTextColor
                         font.pixelSize: root.width < 760 ? 20 : 26
                         font.weight: lineDelegate.index === root.activeLine ? Font.DemiBold : Font.Normal
+                        Behavior on color {
+                            ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
+                        }
                     }
                     background: RoundedRect {
                         radius: 10
@@ -192,6 +304,7 @@ Item {
                 text: "回到当前歌词"
                 preferredWidth: 128
                 theme: root.theme
+                filled: true
                 contentAlignment: Text.AlignHCenter
                 onClicked: {
                     root.following = true

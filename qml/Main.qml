@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import QtQuick.Window
 import Qingyin 1.0
 
@@ -31,6 +32,11 @@ ApplicationWindow {
             else window.showNormal()
         }
         currentView = 0
+    }
+
+    onCurrentViewChanged: {
+        if (window.currentView === 2)
+            nowPlayingLoader.active = true
     }
 
     function toggleFullscreen() {
@@ -108,27 +114,96 @@ ApplicationWindow {
     Item {
         anchors.fill: parent
 
-        Loader {
-            id: pageLoader
+        Item {
+            id: pages
             anchors.fill: parent
-            visible: window.currentView !== 2
-            sourceComponent: window.currentView === 1 ? settingsPage : libraryPage
+
+            Loader {
+                id: pageLoader
+                anchors.fill: parent
+                sourceComponent: window.currentView === 1 ? settingsPage : libraryPage
+            }
+
+            Loader {
+                id: nowPlayingLoader
+                anchors.fill: parent
+                z: 1
+                active: false
+                visible: active
+                opacity: window.currentView === 2 && status === Loader.Ready ? 1 : 0
+                property real slideY: window.currentView === 2 && status === Loader.Ready ? 0 : 12
+                transform: Translate { y: nowPlayingLoader.slideY }
+                Behavior on opacity {
+                    NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+                }
+                Behavior on slideY {
+                    NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+                }
+                onOpacityChanged: {
+                    if (opacity < 0.02 && window.currentView !== 2)
+                        active = false
+                }
+                sourceComponent: NowPlaying {
+                    theme: appTheme
+                    playerBackend: backend.playback
+                    fullscreen: window.visibility === Window.FullScreen
+                    onBackRequested: window.leaveNowPlaying()
+                    onFullscreenRequested: window.toggleFullscreen()
+                }
+            }
         }
 
-        Loader {
-            anchors.fill: parent
-            active: window.currentView === 2
-            sourceComponent: NowPlaying {
-                theme: appTheme
-                playerBackend: backend.playback
-                fullscreen: window.visibility === Window.FullScreen
-                onBackRequested: window.leaveNowPlaying()
-                onFullscreenRequested: window.toggleFullscreen()
+        Item {
+            id: playerFrost
+            z: 2
+            anchors.fill: playerBar
+
+            ShaderEffectSource {
+                id: frostGrab
+                anchors.fill: parent
+                sourceItem: pages
+                sourceRect: Qt.rect(playerBar.x, playerBar.y, playerBar.width, playerBar.height)
+                textureSize: Qt.size(
+                    Math.max(1, Math.round(playerBar.width / 4)),
+                    Math.max(1, Math.round(playerBar.height / 4)))
+                live: true
+                hideSource: false
+                recursive: false
+                visible: false
+            }
+
+            Item {
+                id: frostMask
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                layer.smooth: true
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: playerBar.height / 2
+                    color: "#FFFFFF"
+                    antialiasing: true
+                }
+            }
+
+            MultiEffect {
+                anchors.fill: parent
+                source: frostGrab
+                blurEnabled: true
+                blur: 0.65
+                blurMax: 24
+                autoPaddingEnabled: false
+                maskEnabled: true
+                maskSource: frostMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
             }
         }
 
         PlayerBar {
             id: playerBar
+            z: 3
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 12
@@ -136,19 +211,14 @@ ApplicationWindow {
             height: 80
             theme: appTheme
             playerBackend: backend.playback
-            onNowPlayingRequested: window.currentView = 2
+            onNowPlayingRequested: {
+                nowPlayingLoader.active = true
+                window.currentView = 2
+            }
             onRevealTrackRequested: (trackId) => {
                 window.leaveNowPlaying()
                 Qt.callLater(() => window.revealTrack(trackId))
             }
-        }
-
-        RoundedRect {
-            z: playerBar.z - 1
-            anchors.fill: playerBar
-            anchors.topMargin: 6
-            radius: playerBar.height / 2
-            color: Qt.rgba(0, 0, 0, appTheme.darkTheme ? 0.4 : 0.12)
         }
     }
 

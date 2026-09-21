@@ -103,6 +103,17 @@ Item {
         root.commitPendingQuery()
         root.restoreSearch()
         root.commitPendingQuery()
+        viewLoader.opacity = 0
+        viewFadeIn.restart()
+    }
+
+    NumberAnimation {
+        id: viewFadeIn
+        target: viewLoader
+        property: "opacity"
+        to: 1
+        duration: 160
+        easing.type: Easing.OutCubic
     }
 
     Shortcut {

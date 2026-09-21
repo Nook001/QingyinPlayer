@@ -16,6 +16,8 @@ Item {
 
     readonly property var labels: ["全部", "歌手", "专辑", "目录"]
     readonly property int inset: 2
+    readonly property real tabWidth: tabRow.width > 0
+        ? (tabRow.width - tabRow.spacing * 3) / 4 : 0
 
     Keys.onLeftPressed: root.currentIndex = Math.max(0, root.currentIndex - 1)
     Keys.onRightPressed: root.currentIndex = Math.min(root.labels.length - 1, root.currentIndex + 1)
@@ -26,12 +28,31 @@ Item {
         radius: height / 2
     }
 
+    RoundedRect {
+        id: selectedPill
+        x: tabRow.x + root.currentIndex * (root.tabWidth + tabRow.spacing)
+        y: tabRow.y
+        width: root.tabWidth
+        height: tabRow.height
+        radius: height / 2
+        color: root.theme.subtleColor
+        borderWidth: root.activeFocus ? 1 : 0
+        borderColor: root.theme.accentColor
+        Behavior on x {
+            NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+        }
+        Behavior on width {
+            NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+        }
+    }
+
     Row {
         id: tabRow
 
         anchors.fill: parent
         anchors.margins: root.inset
         spacing: 2
+        z: 1
 
         Repeater {
             model: root.labels
@@ -43,7 +64,7 @@ Item {
                 required property int index
 
                 objectName: "libraryViewTab" + index
-                width: (tabRow.width - tabRow.spacing * 3) / 4
+                width: root.tabWidth
                 height: tabRow.height
                 padding: 0
                 leftInset: 0
@@ -60,10 +81,10 @@ Item {
                 onClicked: root.currentIndex = tab.index
 
                 background: RoundedRect {
-                    color: tab.index === root.currentIndex ? root.theme.subtleColor
+                    color: tab.index === root.currentIndex ? "transparent"
                         : (tab.hovered ? root.theme.hoverColor : "transparent")
                     radius: height / 2
-                    borderWidth: tab.visualFocus || (root.activeFocus && tab.index === root.currentIndex) ? 1 : 0
+                    borderWidth: tab.visualFocus ? 1 : 0
                     borderColor: root.theme.accentColor
                 }
 
@@ -74,6 +95,9 @@ Item {
                     font.weight: tab.index === root.currentIndex ? Font.Medium : Font.Normal
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
+                    Behavior on color {
+                        ColorAnimation { duration: 160; easing.type: Easing.OutCubic }
+                    }
                 }
             }
         }

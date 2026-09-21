@@ -22,6 +22,7 @@ Item {
         readonly property color subtleColor: "#eee"
         readonly property color artworkColor: "#e8e3da"
         readonly property color surfaceColor: "#fafbf8"
+        readonly property color glassColor: "#b3fafbf8"
         readonly property bool darkTheme: false
     }
 
@@ -198,8 +199,10 @@ Item {
             const button = findChild(bar, "openNowPlaying")
             mouseMove(button, button.width / 2, button.height / 2)
             tryVerify(() => cover.overlayVisible)
+            tryVerify(() => findChild(cover, "coverOverlay").opacity > 0.9)
             mouseMove(root, 0, 0)
             tryVerify(() => !cover.overlayVisible)
+            tryVerify(() => findChild(cover, "coverOverlay").opacity < 0.1)
         }
     }
 

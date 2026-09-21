@@ -39,7 +39,7 @@ Item {
 
     RoundedRect {
         anchors.fill: parent
-        color: root.theme.surfaceColor
+        color: root.theme.glassColor
         radius: height / 2
         borderColor: root.theme.dividerColor
         borderWidth: 1
@@ -180,6 +180,12 @@ Item {
             Accessible.name: "打开正在播放与歌词"
             ToolTip.visible: hovered
             ToolTip.text: "正在播放与歌词"
+            scale: hovered && enabled ? 1.06 : 1
+            transformOrigin: Item.Center
+            Behavior on scale {
+                NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+            }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             onClicked: root.nowPlayingRequested()
             contentItem: CoverImage {
                 objectName: "nowPlayingCover"
