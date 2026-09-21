@@ -8,9 +8,9 @@ TabBar {
 
     required property var theme
 
-    implicitWidth: 360
-    implicitHeight: 36
-    padding: 3
+    implicitWidth: 252
+    implicitHeight: 32
+    padding: 2
     spacing: 2
 
     background: RoundedRect {
@@ -19,7 +19,7 @@ TabBar {
     }
 
     Repeater {
-        model: ["所有音乐", "歌手", "专辑", "目录"]
+        model: ["全部", "歌手", "专辑", "目录"]
 
         TabButton {
             id: tab

@@ -10,6 +10,9 @@ Item {
 
     property url source
     property int displaySize: 44
+    property bool overlayVisible: false
+    property string overlayIcon: ""
+    property int overlayIconSize: Math.max(14, Math.round(root.displaySize * 0.4))
     required property var theme
 
     readonly property int bucket: {
@@ -88,5 +91,24 @@ Item {
         size: Math.max(14, Math.round(root.displaySize / 2.4))
         color: root.theme.accentColor
         visible: cover.status !== Image.Ready
+            && !(root.overlayVisible && root.overlayIcon !== "")
+    }
+
+    Item {
+        anchors.fill: parent
+        visible: root.overlayVisible && root.overlayIcon !== ""
+
+        RoundedRect {
+            anchors.fill: parent
+            radius: root.cornerRadius
+            color: "#6B000000"
+        }
+
+        Icon {
+            anchors.centerIn: parent
+            name: root.overlayIcon
+            size: root.overlayIconSize
+            color: "#FFFFFF"
+        }
     }
 }

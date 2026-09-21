@@ -123,6 +123,17 @@ Item {
             verify(!row.isCurrent)
         }
 
+        function test_cover_overlay_icon_follows_hover() {
+            const row = findChild(table, "trackRow2")
+            const play = findChild(table, "rowPlayButton2")
+            compare(play.iconName, "play")
+            mouseMove(row, row.width / 2, row.height / 2)
+            tryVerify(() => row.hovered)
+            tryVerify(() => play.enabled)
+            mouseMove(root, 0, 0)
+            tryVerify(() => !row.hovered)
+        }
+
         function test_double_click_uses_track_id() {
             compare(table.count, 2)
             const row = table.children[0].children[1]
@@ -177,6 +188,17 @@ Item {
             compare(playerMock.play_mode, "repeatOne")
             playerMock.cycle_play_mode()
             compare(playerMock.play_mode, "sequential")
+        }
+
+        function test_now_playing_cover_shows_expand_overlay() {
+            const cover = findChild(bar, "nowPlayingCover")
+            compare(cover.overlayIcon, "expand")
+            verify(!cover.overlayVisible)
+            const button = findChild(bar, "openNowPlaying")
+            mouseMove(button, button.width / 2, button.height / 2)
+            tryVerify(() => cover.overlayVisible)
+            mouseMove(root, 0, 0)
+            tryVerify(() => !cover.overlayVisible)
         }
     }
 

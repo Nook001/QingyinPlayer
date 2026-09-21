@@ -214,6 +214,8 @@ Item {
 
             LibraryViewSwitch {
                 objectName: "libraryViewSwitch"
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredHeight: 32
                 theme: root.theme
                 currentIndex: root.browseMode
                 onCurrentIndexChanged: root.browseMode = currentIndex
@@ -225,6 +227,7 @@ Item {
                 id: searchField
                 objectName: "librarySearchField"
 
+                Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: 220
                 Layout.maximumWidth: 260
                 Layout.preferredHeight: 32

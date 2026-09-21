@@ -106,6 +106,7 @@ Rectangle {
         }
 
         function test_switches_all_four_views() {
+            compare(findChild(page, "libraryViewTab0").text, "全部")
             const loader = findChild(page, "libraryBodyLoader")
             for (let i = 1; i <= 3; ++i) {
                 selectView(i)

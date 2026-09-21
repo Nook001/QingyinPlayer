@@ -170,19 +170,24 @@ Item {
         spacing: 10
 
         Button {
+            id: openNowPlaying
             objectName: "openNowPlaying"
             Layout.preferredWidth: 48
             Layout.preferredHeight: 48
             enabled: root.playerBackend.current_track_id > 0
             padding: 0
+            hoverEnabled: true
             Accessible.name: "打开正在播放与歌词"
             ToolTip.visible: hovered
             ToolTip.text: "正在播放与歌词"
             onClicked: root.nowPlayingRequested()
             contentItem: CoverImage {
+                objectName: "nowPlayingCover"
                 displaySize: 48
                 theme: root.theme
                 source: root.playerBackend.current_cover
+                overlayVisible: openNowPlaying.hovered && openNowPlaying.enabled
+                overlayIcon: "expand"
             }
             background: null
         }

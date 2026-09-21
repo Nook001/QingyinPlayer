@@ -215,30 +215,9 @@ Item {
                             Layout.preferredHeight: 32
                             Text {
                                 anchors.centerIn: parent
-                                visible: !trackRow.hovered && !trackRow.isCurrent
                                 text: String(trackRow.index + 1)
-                                color: root.theme.mutedTextColor
+                                color: trackRow.isCurrent ? root.theme.accentColor : root.theme.mutedTextColor
                                 font.pixelSize: 12
-                            }
-                            FlatButton {
-                                objectName: "rowPlayButton" + trackRow.trackId
-                                anchors.centerIn: parent
-                                theme: root.theme
-                                preferredWidth: 28
-                                preferredHeight: 32
-                                visible: trackRow.hovered || trackRow.isCurrent
-                                iconSize: 14
-                                iconName: trackRow.isCurrent && root.playbackState === "playing" ? "pause" : "play"
-                                Accessible.name: iconName === "pause" ? "暂停" : "播放"
-                                onClicked: {
-                                    root.selectTrack(trackRow.index, trackRow.trackId)
-                                    if (trackRow.isCurrent) {
-                                        Qt.callLater(() => root.togglePlaybackRequested())
-                                    } else {
-                                        const id = trackRow.trackId
-                                        Qt.callLater(() => root.trackActivated(id))
-                                    }
-                                }
                             }
                         }
 
@@ -250,10 +229,34 @@ Item {
                             Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
 
                             CoverImage {
+                                id: rowCover
                                 anchors.centerIn: parent
                                 displaySize: 44
                                 theme: root.theme
                                 source: trackRow.cover
+                                overlayVisible: trackRow.hovered
+                                overlayIcon: trackRow.isCurrent && root.playbackState === "playing"
+                                    ? "pause" : "play"
+                            }
+
+                            MouseArea {
+                                id: rowPlayButton
+                                objectName: "rowPlayButton" + trackRow.trackId
+                                property string iconName: rowCover.overlayIcon
+                                anchors.fill: rowCover
+                                enabled: trackRow.hovered
+                                cursorShape: Qt.PointingHandCursor
+                                Accessible.role: Accessible.Button
+                                Accessible.name: iconName === "pause" ? "暂停" : "播放"
+                                onClicked: {
+                                    root.selectTrack(trackRow.index, trackRow.trackId)
+                                    if (trackRow.isCurrent) {
+                                        Qt.callLater(() => root.togglePlaybackRequested())
+                                    } else {
+                                        const id = trackRow.trackId
+                                        Qt.callLater(() => root.trackActivated(id))
+                                    }
+                                }
                             }
                         }
 
