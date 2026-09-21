@@ -149,17 +149,27 @@ Item {
             objectName: "nowPlayingBack"
             theme: root.theme
             filled: true
-            text: "返回曲库"
-            preferredWidth: 88
+            iconName: "chevronLeft"
+            iconSize: 18
+            preferredWidth: 36
+            preferredHeight: 36
+            Accessible.name: "返回曲库"
+            ToolTip.visible: hovered
+            ToolTip.text: "返回曲库"
             onClicked: root.backRequested()
         }
         Item { Layout.fillWidth: true }
         FlatButton {
+            objectName: "nowPlayingFullscreen"
             theme: root.theme
             filled: true
-            text: root.fullscreen ? "退出全屏" : "全屏"
-            preferredWidth: 80
-            contentAlignment: Text.AlignHCenter
+            iconName: root.fullscreen ? "minimize" : "expand"
+            iconSize: 16
+            preferredWidth: 36
+            preferredHeight: 36
+            Accessible.name: root.fullscreen ? "退出全屏" : "全屏"
+            ToolTip.visible: hovered
+            ToolTip.text: Accessible.name
             onClicked: root.fullscreenRequested()
         }
     }

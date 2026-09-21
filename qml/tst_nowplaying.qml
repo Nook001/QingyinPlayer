@@ -115,6 +115,17 @@ Item {
             mouseWheel(list, 100, 100, 0, -120)
             tryCompare(loader.item, "following", false)
         }
+        function test_header_icon_buttons() {
+            const back = findChild(loader.item, "nowPlayingBack")
+            compare(back.iconName, "chevronLeft")
+            compare(back.text, "")
+            const full = findChild(loader.item, "nowPlayingFullscreen")
+            compare(full.iconName, "expand")
+            compare(full.text, "")
+            loader.item.fullscreen = true
+            compare(full.iconName, "minimize")
+            mouseClick(back)
+        }
         function test_narrow_dark() {
             root.width = 640
             theme.darkTheme = true

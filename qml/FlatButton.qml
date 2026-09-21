@@ -12,9 +12,11 @@ Button {
     property string iconName
     property int iconSize: 18
     property int fontPixelSize: 16
+    property int fontWeight: Font.Normal
     property int contentAlignment: Text.AlignLeft
     property bool emphasized: false
     property bool filled: false
+    property color labelColor: root.theme.textColor
 
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
@@ -35,7 +37,7 @@ Button {
             visible: root.iconName !== ""
             name: root.iconName
             size: root.iconSize
-            color: root.emphasized ? "#FFFFFF" : root.theme.textColor
+            color: root.emphasized ? "#FFFFFF" : root.labelColor
             opacity: root.enabled ? 1 : 0.35
         }
 
@@ -43,11 +45,13 @@ Button {
             anchors.fill: parent
             visible: root.iconName === ""
             text: root.text
-            color: root.theme.textColor
+            color: root.labelColor
             opacity: root.enabled ? 1 : 0.35
             horizontalAlignment: root.contentAlignment
             verticalAlignment: Text.AlignVCenter
             font.pixelSize: root.fontPixelSize
+            font.weight: root.fontWeight
+            font.letterSpacing: root.fontPixelSize <= 11 ? 0.6 : 0
         }
     }
 

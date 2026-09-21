@@ -88,59 +88,100 @@ Item {
         anchors.fill: parent
         spacing: 6
 
-        RowLayout {
+        Item {
             Layout.fillWidth: true
-            Layout.leftMargin: 4
-            Layout.rightMargin: 16
-            spacing: 10
+            Layout.preferredHeight: 34
 
-            Text {
-                Layout.preferredWidth: root.indexWidth
-                Layout.minimumWidth: root.indexWidth
-                Layout.maximumWidth: root.indexWidth
-                text: "#"
-                color: root.theme.mutedTextColor
-                horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: 12
+            RoundedRect {
+                anchors.fill: parent
+                radius: 8
+                color: root.theme.subtleColor
             }
 
-            FlatButton {
-                Layout.fillWidth: true
-                preferredHeight: 28
-                theme: root.theme
-                enabled: root.sortable
-                contentAlignment: Text.AlignLeft
-                fontPixelSize: 12
-                text: root.heading("标题", "title")
-                Accessible.name: "按标题排序"
-                onClicked: if (root.sortable)
-                    root.sortRequested("title")
+            Rectangle {
+                width: 2
+                height: 12
+                radius: 1
+                color: root.theme.accentColor
+                opacity: 0.8
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
             }
 
-            FlatButton {
-                Layout.preferredWidth: root.albumWidth
-                preferredHeight: 28
-                theme: root.theme
-                enabled: root.sortable
-                contentAlignment: Text.AlignLeft
-                fontPixelSize: 12
-                text: root.heading("专辑", "album")
-                Accessible.name: "按专辑排序"
-                onClicked: if (root.sortable)
-                    root.sortRequested("album")
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                height: 1
+                color: root.theme.dividerColor
+                opacity: 0.65
             }
 
-            FlatButton {
-                Layout.preferredWidth: root.durationWidth
-                preferredHeight: 28
-                theme: root.theme
-                enabled: root.sortable
-                contentAlignment: Text.AlignRight
-                fontPixelSize: 12
-                text: root.heading("时长", "duration")
-                Accessible.name: "按时长排序"
-                onClicked: if (root.sortable)
-                    root.sortRequested("duration")
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 4
+                anchors.rightMargin: 16
+                spacing: 10
+
+                Text {
+                    Layout.preferredWidth: root.indexWidth
+                    Layout.minimumWidth: root.indexWidth
+                    Layout.maximumWidth: root.indexWidth
+                    text: "#"
+                    color: root.theme.mutedTextColor
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 11
+                    font.weight: Font.Medium
+                    font.family: "monospace"
+                }
+
+                FlatButton {
+                    Layout.fillWidth: true
+                    preferredHeight: 28
+                    theme: root.theme
+                    enabled: root.sortable
+                    contentAlignment: Text.AlignLeft
+                    fontPixelSize: 11
+                    fontWeight: Font.Medium
+                    labelColor: root.theme.mutedTextColor
+                    text: root.heading("标题", "title")
+                    Accessible.name: "按标题排序"
+                    onClicked: if (root.sortable)
+                        root.sortRequested("title")
+                }
+
+                FlatButton {
+                    Layout.preferredWidth: root.albumWidth
+                    preferredHeight: 28
+                    theme: root.theme
+                    enabled: root.sortable
+                    contentAlignment: Text.AlignLeft
+                    fontPixelSize: 11
+                    fontWeight: Font.Medium
+                    labelColor: root.theme.mutedTextColor
+                    text: root.heading("专辑", "album")
+                    Accessible.name: "按专辑排序"
+                    onClicked: if (root.sortable)
+                        root.sortRequested("album")
+                }
+
+                FlatButton {
+                    Layout.preferredWidth: root.durationWidth
+                    preferredHeight: 28
+                    theme: root.theme
+                    enabled: root.sortable
+                    contentAlignment: Text.AlignRight
+                    fontPixelSize: 11
+                    fontWeight: Font.Medium
+                    labelColor: root.theme.mutedTextColor
+                    text: root.heading("时长", "duration")
+                    Accessible.name: "按时长排序"
+                    onClicked: if (root.sortable)
+                        root.sortRequested("duration")
+                }
             }
         }
 
@@ -219,6 +260,7 @@ Item {
                                 text: String(trackRow.index + 1).padStart(2, "0")
                                 color: trackRow.isCurrent ? root.theme.accentColor : root.theme.mutedTextColor
                                 font.pixelSize: 12
+                                font.family: "monospace"
                             }
                         }
 
