@@ -8,6 +8,7 @@ use qingyin_player::{
     CommandId, CommandKind, FakeHandle, LoadGeneration, PlaybackState, Player, PlayerEvent,
 };
 use qmetaobject::prelude::*;
+use qmetaobject::{QVariantList, QVariantMap};
 use rand::seq::SliceRandom;
 use rand::{Rng, rng};
 
@@ -379,6 +380,24 @@ pub struct PlaybackController {
     current_title: qt_property!(QString; NOTIFY playback_changed),
     current_artist: qt_property!(QString; NOTIFY playback_changed),
     current_cover: qt_property!(QString; NOTIFY playback_changed),
+    current_audio: qt_property!(QVariantMap; NOTIFY track_details_changed),
+    track_details_changed: qt_signal!(),
+    lyrics: qt_property!(QVariantList; NOTIFY lyrics_changed),
+    lyrics_synchronized: qt_property!(bool; NOTIFY lyrics_changed),
+    lyrics_loading: qt_property!(bool; NOTIFY lyrics_changed),
+    lyrics_error: qt_property!(QString; NOTIFY lyrics_changed),
+    lyrics_changed: qt_signal!(),
+    lyrics_visible: bool,
+    lyrics_worker_running: bool,
+    lyrics_generation: Option<LoadGeneration>,
+    set_lyrics_visible: qt_method!(
+        fn set_lyrics_visible(&mut self, visible: bool) {
+            self.lyrics_visible = visible;
+            if visible {
+                self.load_lyrics();
+            }
+        }
+    ),
     playback_error: qt_property!(QString; NOTIFY playback_changed),
     playback_changed: qt_signal!(),
     playback_position: qt_property!(i64; NOTIFY playback_position_changed),
@@ -532,9 +551,117 @@ impl PlaybackController {
         self.engine.publish_current();
         let play_id = player.play();
         self.engine.pending_command = Some((play_id, CommandKind::Play));
+        self.publish_track_details();
         self.publish_identity();
         self.publish_position();
         self.publish_duration();
+    }
+
+    fn publish_track_details(&mut self) {
+        let track = &self.engine.queue[self.engine.current.unwrap()].metadata;
+        let audio = &track.audio;
+        let mut fields = QVariantMap::default();
+        fields.insert(
+            "format".into(),
+            QString::from(audio.format.as_deref().unwrap_or_default()).into(),
+        );
+        fields.insert(
+            "sampleRate".into(),
+            audio.sample_rate.unwrap_or_default().into(),
+        );
+        fields.insert(
+            "bitDepth".into(),
+            u32::from(audio.bit_depth.unwrap_or_default()).into(),
+        );
+        fields.insert(
+            "channels".into(),
+            u32::from(audio.channels.unwrap_or_default()).into(),
+        );
+        fields.insert("bitrate".into(), audio.bitrate.unwrap_or_default().into());
+        fields.insert("fileSize".into(), (track.file_size as f64).into());
+        fields.insert(
+            "path".into(),
+            QString::from(track.path.to_string_lossy().as_ref()).into(),
+        );
+        self.current_audio = fields;
+        self.track_details_changed();
+        self.lyrics = QVariantList::default();
+        self.lyrics_generation = None;
+        self.lyrics_synchronized = false;
+        self.lyrics_error = QString::default();
+        self.lyrics_loading = self.lyrics_visible;
+        self.lyrics_changed();
+        if self.lyrics_visible {
+            self.load_lyrics();
+        }
+    }
+
+    fn load_lyrics(&mut self) {
+        if self.lyrics_worker_running || self.lyrics_generation == Some(self.engine.generation) {
+            return;
+        }
+        let Some(track) = self.engine.current.and_then(|i| self.engine.queue.get(i)) else {
+            return;
+        };
+        let path = track.metadata.path.clone();
+        let generation = self.engine.generation;
+        let controller = QPointer::from(&*self);
+        let deliver = qmetaobject::queued_callback(
+            move |result: Result<qingyin_metadata::lyrics::Lyrics, String>| {
+                let Some(controller) = controller.as_pinned() else {
+                    return;
+                };
+                let mut controller = controller.borrow_mut();
+                controller.finish_lyrics(generation, result);
+            },
+        );
+        self.lyrics_worker_running = true;
+        self.lyrics_loading = true;
+        self.lyrics_changed();
+        if let Err(error) = std::thread::Builder::new()
+            .name("qingyin-lyrics".into())
+            .spawn(move || {
+                deliver(qingyin_metadata::lyrics::read(&path));
+            })
+        {
+            self.lyrics_worker_running = false;
+            self.lyrics_loading = false;
+            self.lyrics_error = error.to_string().into();
+            self.lyrics_changed();
+        }
+    }
+
+    fn finish_lyrics(
+        &mut self,
+        generation: LoadGeneration,
+        result: Result<qingyin_metadata::lyrics::Lyrics, String>,
+    ) {
+        self.lyrics_worker_running = false;
+        if generation != self.engine.generation {
+            if self.lyrics_visible {
+                self.load_lyrics();
+            }
+            return;
+        }
+        self.lyrics_loading = false;
+        self.lyrics_generation = Some(generation);
+        match result {
+            Ok(lyrics) => {
+                self.lyrics_synchronized = lyrics.synchronized;
+                self.lyrics = lyrics
+                    .lines
+                    .into_iter()
+                    .map(|line| {
+                        let mut item = QVariantMap::default();
+                        item.insert("text".into(), QString::from(line.text).into());
+                        item.insert("time".into(), line.time_ms.unwrap_or(-1).into());
+                        QVariant::from(item)
+                    })
+                    .collect();
+            }
+            Err(error) => self.lyrics_error = error.into(),
+        }
+        self.lyrics_changed();
     }
 
     fn toggle_playback_internal(&mut self) {
@@ -724,6 +851,22 @@ mod tests {
             Vec::new(),
             Some(Duration::from_secs(10)),
         ))
+    }
+
+    #[test]
+    fn stale_lyrics_cannot_replace_the_current_track() {
+        let mut controller = PlaybackController::default();
+        controller.engine.generation = 2;
+        controller.finish_lyrics(1, Ok(qingyin_metadata::lyrics::parse("[00:01]old")));
+        assert!(controller.lyrics.is_empty());
+        assert_eq!(controller.lyrics_generation, None);
+        controller.finish_lyrics(2, Ok(qingyin_metadata::lyrics::parse("[00:01]current")));
+        assert_eq!(controller.lyrics.len(), 1);
+        assert!(controller.lyrics_synchronized);
+        assert_eq!(controller.lyrics_generation, Some(2));
+        controller.finish_lyrics(1, Err("stale error".into()));
+        assert!(controller.lyrics_error.to_string().is_empty());
+        assert_eq!(controller.lyrics.len(), 1);
     }
 
     #[test]

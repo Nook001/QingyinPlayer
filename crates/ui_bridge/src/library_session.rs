@@ -357,7 +357,6 @@ impl LibrarySession {
         sort_ascending: bool,
         can_prune: bool,
     ) {
-        self.ensure_services();
         self.music_directories = normalize_roots(directories);
         self.sort_column = sort_column;
         self.sort_ascending = sort_ascending;
@@ -379,6 +378,8 @@ impl LibrarySession {
                 session.set_busy(false, false);
                 match result {
                     Ok(snapshot) => {
+                        // Search connections require the schema installed by restore_library.
+                        session.ensure_services();
                         session.apply_library_snapshot(snapshot);
                         if !session.music_directories.is_empty() {
                             let directories = session.music_directories.clone();

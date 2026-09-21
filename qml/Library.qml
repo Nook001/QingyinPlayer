@@ -107,6 +107,7 @@ Item {
 
     Shortcut {
         sequences: [StandardKey.Find]
+        enabled: root.visible
         onActivated: {
             searchField.forceActiveFocus()
             searchField.selectAll()

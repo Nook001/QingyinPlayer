@@ -124,6 +124,14 @@ Module {
 
         Property { name: "playback_state"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_track_id"; type: "qlonglong"; notify: "playback_changed" }
+        Property { name: "current_audio"; type: "QVariantMap"; notify: "track_details_changed" }
+        Property { name: "lyrics"; type: "QVariantList"; notify: "lyrics_changed" }
+        Property { name: "lyrics_synchronized"; type: "bool"; notify: "lyrics_changed" }
+        Property { name: "lyrics_loading"; type: "bool"; notify: "lyrics_changed" }
+        Property { name: "lyrics_error"; type: "QString"; notify: "lyrics_changed" }
+        Signal { name: "track_details_changed" }
+        Signal { name: "lyrics_changed" }
+        Method { name: "set_lyrics_visible"; Parameter { name: "visible"; type: "bool" } }
         Property { name: "current_title"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_artist"; type: "QString"; notify: "playback_changed" }
         Property { name: "current_cover"; type: "QString"; notify: "playback_changed" }

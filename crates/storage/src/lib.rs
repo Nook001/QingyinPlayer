@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use qingyin_chinese::{contains_han, search_key};
-use qingyin_metadata::{FileFingerprint, TrackMetadata, unique_credited_artists};
+use qingyin_metadata::{AudioProperties, FileFingerprint, TrackMetadata, unique_credited_artists};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use thiserror::Error;
@@ -12,7 +12,7 @@ pub type TrackId = i64;
 const SEARCH_FIELD_TITLE: &str = "title";
 const SEARCH_FIELD_ARTIST: &str = "artist";
 const SEARCH_FIELD_ALBUM: &str = "album";
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 const BUSY_TIMEOUT_MS: u32 = 5000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +155,7 @@ impl Database {
                     tracks.duration_ms, tracks.disc_number, tracks.track_number,
                     tracks.title_sort, tracks.album_sort, tracks.artist_sort,
                     tracks.modified_at_ns, tracks.file_size, tracks.cover_digest,
+                    tracks.audio_format, tracks.sample_rate, tracks.bit_depth, tracks.channels, tracks.bitrate,
                     track_artists.artist
              FROM tracks
              LEFT JOIN track_artists ON track_artists.track_id = tracks.id
@@ -464,6 +465,19 @@ impl Database {
             )?;
             set_user_version(&transaction, 5)?;
         }
+        if version < 6 {
+            if !has_track_column(&transaction, "audio_format")? {
+                transaction.execute_batch(
+                    "ALTER TABLE tracks ADD COLUMN audio_format TEXT;
+                     ALTER TABLE tracks ADD COLUMN sample_rate INTEGER;
+                     ALTER TABLE tracks ADD COLUMN bit_depth INTEGER;
+                     ALTER TABLE tracks ADD COLUMN channels INTEGER;
+                     ALTER TABLE tracks ADD COLUMN bitrate INTEGER;
+                     UPDATE tracks SET modified_at_ns = 0;",
+                )?;
+            }
+            set_user_version(&transaction, 6)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -486,7 +500,12 @@ const LATEST_SCHEMA: &str = "
         title_sort TEXT,
         album_sort TEXT,
         artist_sort TEXT,
-        cover_digest TEXT
+        cover_digest TEXT,
+        audio_format TEXT,
+        sample_rate INTEGER,
+        bit_depth INTEGER,
+        channels INTEGER,
+        bitrate INTEGER
     );
     CREATE TABLE IF NOT EXISTS track_artists (
         track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -527,6 +546,7 @@ struct TrackRow {
     modified_at_ns: i64,
     file_size: i64,
     cover_digest: Option<String>,
+    audio: AudioProperties,
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
@@ -602,9 +622,10 @@ fn upsert_track_on(
         "INSERT INTO tracks (
              path, title, album, album_artist, duration_ms, disc_number, track_number,
              modified_at, modified_at_ns, file_size,
-             title_sort, album_sort, artist_sort, cover_digest
+             title_sort, album_sort, artist_sort, cover_digest,
+             audio_format, sample_rate, bit_depth, channels, bitrate
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(path) DO UPDATE SET
              title = excluded.title,
              album = excluded.album,
@@ -618,7 +639,12 @@ fn upsert_track_on(
              title_sort = excluded.title_sort,
              album_sort = excluded.album_sort,
              artist_sort = excluded.artist_sort,
-             cover_digest = excluded.cover_digest
+             cover_digest = excluded.cover_digest,
+             audio_format = excluded.audio_format,
+             sample_rate = excluded.sample_rate,
+             bit_depth = excluded.bit_depth,
+             channels = excluded.channels,
+             bitrate = excluded.bitrate
          RETURNING id",
     )?;
     let track_id = statement.query_row(
@@ -637,6 +663,11 @@ fn upsert_track_on(
             track.album_sort,
             track.artist_sort,
             track.cover_digest,
+            track.audio.format,
+            track.audio.sample_rate,
+            track.audio.bit_depth,
+            track.audio.channels,
+            track.audio.bitrate,
         ],
         |row| row.get(0),
     )?;
@@ -679,8 +710,15 @@ fn joined_track_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(TrackRow, Opti
             modified_at_ns: row.get(11)?,
             file_size: row.get(12)?,
             cover_digest: row.get(13)?,
+            audio: AudioProperties {
+                format: row.get(14)?,
+                sample_rate: row.get(15)?,
+                bit_depth: row.get(16)?,
+                channels: row.get(17)?,
+                bitrate: row.get(18)?,
+            },
         },
-        row.get(14)?,
+        row.get(19)?,
     ))
 }
 
@@ -736,6 +774,7 @@ fn stored_track(row: TrackRow, artists: Vec<String>) -> Result<StoredTrack, Stor
             file_size: u64::try_from(row.file_size).unwrap_or(0),
             modified_at_ns: row.modified_at_ns,
             cover_digest: row.cover_digest,
+            audio: row.audio,
         },
     })
 }
@@ -801,12 +840,14 @@ fn production_search_sql(root_count: usize) -> String {
                 ranked.duration_ms, ranked.disc_number, ranked.track_number,
                 ranked.title_sort, ranked.album_sort, ranked.artist_sort,
                 ranked.modified_at_ns, ranked.file_size, ranked.cover_digest,
+                    ranked.audio_format, ranked.sample_rate, ranked.bit_depth, ranked.channels, ranked.bitrate,
                 track_artists.artist
          FROM (
              SELECT tracks.id, tracks.path, tracks.title, tracks.album, tracks.album_artist,
                     tracks.duration_ms, tracks.disc_number, tracks.track_number,
                     tracks.title_sort, tracks.album_sort, tracks.artist_sort,
                     tracks.modified_at_ns, tracks.file_size, tracks.cover_digest,
+                    tracks.audio_format, tracks.sample_rate, tracks.bit_depth, tracks.channels, tracks.bitrate,
                     MIN(CASE search_terms.field
                             WHEN 'title' THEN 0
                             WHEN 'artist' THEN 1
@@ -883,6 +924,60 @@ fn root_predicate_at(start: usize, count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_properties_survive_upsert_list_and_search() {
+        let mut db = Database::open_in_memory().unwrap();
+        let mut track = TrackMetadata::from_display(
+            "/music/song.flac",
+            "song",
+            None,
+            vec!["artist".into()],
+            None,
+        );
+        track.audio = AudioProperties {
+            format: Some("FLAC".into()),
+            sample_rate: Some(96000),
+            bit_depth: Some(24),
+            channels: Some(2),
+            bitrate: Some(1400),
+        };
+        let id = db.upsert_track(&track).unwrap();
+        assert_eq!(db.list_tracks().unwrap()[0].metadata.audio, track.audio);
+        assert_eq!(
+            db.search_tracks("song", 10, &["/music".into()])
+                .unwrap()
+                .tracks[0]
+                .metadata
+                .audio,
+            track.audio
+        );
+        track.audio = AudioProperties::default();
+        assert_eq!(db.upsert_track(&track).unwrap(), id);
+        assert_eq!(db.list_tracks().unwrap()[0].metadata.audio, track.audio);
+    }
+
+    #[test]
+    fn migrates_v5_and_marks_existing_files_for_property_backfill() {
+        let mut db = Database::open_in_memory().unwrap();
+        let mut track = TrackMetadata::from_display("/music/song.flac", "song", None, vec![], None);
+        track.modified_at_ns = 123456789;
+        let id = db.upsert_track(&track).unwrap();
+        db.connection
+            .execute_batch(
+                "ALTER TABLE tracks DROP COLUMN audio_format;
+            ALTER TABLE tracks DROP COLUMN sample_rate; ALTER TABLE tracks DROP COLUMN bit_depth;
+            ALTER TABLE tracks DROP COLUMN channels; ALTER TABLE tracks DROP COLUMN bitrate;
+            PRAGMA user_version = 5;",
+            )
+            .unwrap();
+        db.migrate().unwrap();
+        let stored = db.list_tracks().unwrap();
+        assert_eq!(stored[0].id, id);
+        assert_eq!(stored[0].metadata.modified_at_ns, 0);
+        assert_eq!(stored[0].metadata.audio, AudioProperties::default());
+        assert_eq!(user_version(&db.connection).unwrap(), SCHEMA_VERSION);
+    }
 
     #[test]
     fn creates_the_field_search_schema() {

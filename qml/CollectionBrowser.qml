@@ -28,7 +28,7 @@ Item {
 
     Shortcut {
         sequences: ["Escape", "Alt+Left"]
-        enabled: root.showingDetail
+        enabled: root.visible && root.showingDetail
         onActivated: root.collectionClosed()
     }
 

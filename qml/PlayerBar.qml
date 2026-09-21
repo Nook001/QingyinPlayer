@@ -11,6 +11,7 @@ Item {
     required property var playerBackend
 
     signal revealTrackRequested(int trackId)
+    signal nowPlayingRequested()
 
     focus: true
 
@@ -157,10 +158,6 @@ Item {
         Accessible.role: Accessible.Button
         Accessible.name: "在曲库中显示当前歌曲"
         Keys.onReturnPressed: root.revealTrackRequested(root.playerBackend.current_track_id)
-        TapHandler {
-            enabled: root.playerBackend.current_track_id > 0
-            onTapped: root.revealTrackRequested(root.playerBackend.current_track_id)
-        }
         HoverHandler { id: trackInfoHover; cursorShape: Qt.PointingHandCursor }
         ToolTip.visible: trackInfoHover.hovered && root.playerBackend.current_track_id > 0
         ToolTip.delay: 600
@@ -172,13 +169,29 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         spacing: 10
 
-        CoverImage {
-            displaySize: 48
-            theme: root.theme
-            source: root.playerBackend.current_cover
+        Button {
+            objectName: "openNowPlaying"
+            Layout.preferredWidth: 48
+            Layout.preferredHeight: 48
+            enabled: root.playerBackend.current_track_id > 0
+            padding: 0
+            Accessible.name: "打开正在播放与歌词"
+            ToolTip.visible: hovered
+            ToolTip.text: "正在播放与歌词"
+            onClicked: root.nowPlayingRequested()
+            contentItem: CoverImage {
+                displaySize: 48
+                theme: root.theme
+                source: root.playerBackend.current_cover
+            }
+            background: null
         }
 
         ColumnLayout {
+            TapHandler {
+                enabled: root.playerBackend.current_track_id > 0
+                onTapped: root.revealTrackRequested(root.playerBackend.current_track_id)
+            }
             Layout.fillWidth: true
             spacing: 3
 

@@ -23,6 +23,36 @@ ApplicationWindow {
     signal revealTrack(int trackId)
 
     property int currentView: 0
+    property bool wasMaximized: false
+
+    function leaveNowPlaying() {
+        if (window.visibility === Window.FullScreen) {
+            if (wasMaximized) window.showMaximized()
+            else window.showNormal()
+        }
+        currentView = 0
+    }
+
+    function toggleFullscreen() {
+        if (window.visibility === Window.FullScreen) {
+            if (wasMaximized) window.showMaximized()
+            else window.showNormal()
+        } else {
+            wasMaximized = window.visibility === Window.Maximized
+            window.showFullScreen()
+        }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: window.currentView === 2
+        onActivated: window.leaveNowPlaying()
+    }
+    Shortcut {
+        sequence: "F11"
+        enabled: window.currentView === 2
+        onActivated: window.toggleFullscreen()
+    }
     property bool darkTheme: backend.dark_theme
     property string libraryQuery: ""
     property var libraryQueries: ["", "", "", ""]
@@ -81,7 +111,20 @@ ApplicationWindow {
         Loader {
             id: pageLoader
             anchors.fill: parent
-            sourceComponent: window.currentView === 0 ? libraryPage : settingsPage
+            visible: window.currentView !== 2
+            sourceComponent: window.currentView === 1 ? settingsPage : libraryPage
+        }
+
+        Loader {
+            anchors.fill: parent
+            active: window.currentView === 2
+            sourceComponent: NowPlaying {
+                theme: appTheme
+                playerBackend: backend.playback
+                fullscreen: window.visibility === Window.FullScreen
+                onBackRequested: window.leaveNowPlaying()
+                onFullscreenRequested: window.toggleFullscreen()
+            }
         }
 
         PlayerBar {
@@ -93,8 +136,9 @@ ApplicationWindow {
             height: 80
             theme: appTheme
             playerBackend: backend.playback
+            onNowPlayingRequested: window.currentView = 2
             onRevealTrackRequested: (trackId) => {
-                window.currentView = 0
+                window.leaveNowPlaying()
                 Qt.callLater(() => window.revealTrack(trackId))
             }
         }

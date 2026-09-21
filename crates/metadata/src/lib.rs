@@ -1,3 +1,5 @@
+pub mod lyrics;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -10,6 +12,16 @@ use lofty::tag::{Accessor, ItemKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Source-file properties; these do not describe the output device.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioProperties {
+    pub format: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u8>,
+    pub channels: Option<u8>,
+    pub bitrate: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackMetadata {
     pub path: PathBuf,
@@ -19,6 +31,8 @@ pub struct TrackMetadata {
     pub album_artist: Option<String>,
     pub artists: Vec<String>,
     pub duration: Option<Duration>,
+    #[serde(default)]
+    pub audio: AudioProperties,
     pub disc_number: Option<u32>,
     pub track_number: Option<u32>,
     /// Optional tagged sort values (`TITLESORT` / `TSOT`, etc.). Empty means derive from display.
@@ -51,6 +65,7 @@ impl TrackMetadata {
             album_artist: None,
             artists,
             duration,
+            audio: AudioProperties::default(),
             disc_number: None,
             track_number: None,
             title_sort: None,
@@ -198,6 +213,13 @@ fn parse_tagged_file(
             .or_else(|| text_tag(tag, ItemKey::AlbumArtists)),
         artists,
         duration: (!duration.is_zero()).then_some(duration),
+        audio: AudioProperties {
+            format: Some(format!("{:?}", tagged_file.file_type()).to_uppercase()),
+            sample_rate: tagged_file.properties().sample_rate().filter(|&v| v > 0),
+            bit_depth: tagged_file.properties().bit_depth().filter(|&v| v > 0),
+            channels: tagged_file.properties().channels().filter(|&v| v > 0),
+            bitrate: tagged_file.properties().audio_bitrate().filter(|&v| v > 0),
+        },
         disc_number: number_tag(tag, ItemKey::DiscNumber),
         track_number: number_tag(tag, ItemKey::TrackNumber),
         title_sort: sort_tag(tag, ItemKey::TrackTitleSortOrder),
@@ -467,6 +489,33 @@ mod tests {
             unique_credited_artists(["Or3O", "OR3o"]),
             vec!["Or3O".to_owned()]
         );
+    }
+
+    #[test]
+    fn reads_source_audio_properties_without_inventing_unknown_values() {
+        let tagged = TaggedFile::new(
+            lofty::file::FileType::Flac,
+            lofty::properties::FileProperties::new(
+                Duration::from_secs(60),
+                Some(1500),
+                Some(1400),
+                Some(96000),
+                Some(24),
+                Some(2),
+                None,
+            ),
+            Vec::new(),
+        );
+        let (track, _) = parse_tagged_file(Path::new("music.flac"), &tagged, false);
+        assert_eq!(track.audio.sample_rate, Some(96000));
+        assert_eq!(track.audio.bit_depth, Some(24));
+        assert_eq!(track.audio.channels, Some(2));
+        assert_eq!(track.audio.bitrate, Some(1400));
+        assert_eq!(track.audio.format.as_deref(), Some("FLAC"));
+        let unknown = TaggedFile::new(lofty::file::FileType::Mpeg, Default::default(), Vec::new());
+        let (track, _) = parse_tagged_file(Path::new("music.mp3"), &unknown, false);
+        assert_eq!(track.audio.bit_depth, None);
+        assert_eq!(track.audio.sample_rate, None);
     }
 
     #[test]

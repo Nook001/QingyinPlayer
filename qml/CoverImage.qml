@@ -19,7 +19,8 @@ Item {
             return 54
         if (root.displaySize <= 80)
             return 64
-        return 160
+        if (root.displaySize <= 160) return 160
+        return 512
     }
     readonly property real dpr: Math.max(1, Screen.devicePixelRatio)
     readonly property int pixelSize: Math.round(root.bucket * root.dpr)
