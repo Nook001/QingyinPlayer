@@ -189,7 +189,7 @@ Item {
                 Text {
                     text: "曲库"
                     color: root.theme.textColor
-                    font.pixelSize: 28
+                    font.pixelSize: root.theme.titleSize
                     font.weight: Font.DemiBold
                 }
 
@@ -198,7 +198,7 @@ Item {
                     visible: root.session.track_count > 0
                     text: root.session.track_count + " 首"
                     color: root.theme.mutedTextColor
-                    font.pixelSize: 14
+                    font.pixelSize: root.theme.bodySize
                 }
             }
 
@@ -209,7 +209,7 @@ Item {
                 text: root.headerStatusText
                 color: root.theme.mutedTextColor
                 elide: Text.ElideRight
-                font.pixelSize: 12
+                font.pixelSize: root.theme.metaSize
             }
 
             Item {
@@ -229,7 +229,7 @@ Item {
                 placeholderTextColor: root.theme.mutedTextColor
                 leftPadding: 32
                 rightPadding: searchField.text !== "" ? 34 : 12
-                font.pixelSize: 13
+                font.pixelSize: root.theme.metaSize
                 color: root.theme.textColor
                 onTextChanged: {
                     if (root.restoringSearch)
@@ -297,7 +297,7 @@ Item {
                 theme: root.theme
                 text: "添加目录"
                 filled: true
-                fontPixelSize: 13
+                fontPixelSize: root.theme.metaSize
                 contentAlignment: Text.AlignHCenter
                 preferredWidth: 108
                 preferredHeight: 32
@@ -411,7 +411,7 @@ Item {
                             return root.session.scanning ? "正在扫描音乐" : "曲库还是空的"
                         }
                         color: root.theme.textColor
-                        font.pixelSize: 18
+                        font.pixelSize: root.theme.bodySize
                         font.weight: Font.DemiBold
                     }
 
@@ -420,7 +420,7 @@ Item {
                         visible: !root.filtering
                         text: root.session.scan_status || "添加一个本地目录开始整理音乐"
                         color: root.theme.mutedTextColor
-                        font.pixelSize: 13
+                        font.pixelSize: root.theme.metaSize
                     }
                 }
             }

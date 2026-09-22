@@ -1,7 +1,7 @@
 use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -114,7 +114,7 @@ pub enum PlayerError {
 /// Frontend that assigns command IDs and load generations. Confirmed state comes from events.
 #[derive(Debug)]
 pub struct Player {
-    commands: Sender<(CommandId, PlayerCommand)>,
+    commands: CommandSink,
     next_id: CommandId,
     generation: LoadGeneration,
     requested: PlaybackState,
@@ -247,9 +247,7 @@ impl Player {
             HIDDEN_PROGRESS_INTERVAL
         };
         self.next_id = self.next_id.wrapping_add(1);
-        let _ = self
-            .commands
-            .send((self.next_id, PlayerCommand::SetProgressInterval(interval)));
+        self.enqueue(self.next_id, PlayerCommand::SetProgressInterval(interval));
     }
 
     /// Waits for shutdown with a bounded timeout. Does not join again after a timeout.
@@ -286,8 +284,37 @@ impl Player {
         let _ = kind;
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
-        let _ = self.commands.send((id, command));
+        self.enqueue(id, command);
         id
+    }
+
+    fn enqueue(&self, id: CommandId, command: PlayerCommand) {
+        match &self.commands {
+            CommandSink::Mpsc(sender) => {
+                let _ = sender.send((id, command));
+            }
+            CommandSink::Gst(wake) => {
+                let schedule = {
+                    let mut queue = wake
+                        .queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    queue.items.push_back((id, command));
+                    if queue.scheduled {
+                        false
+                    } else {
+                        queue.scheduled = true;
+                        true
+                    }
+                };
+                if schedule {
+                    let queue = Arc::clone(&wake.queue);
+                    let bridge = Arc::clone(&wake.bridge);
+                    wake.context
+                        .invoke(move || drain_gst_commands(&queue, &bridge));
+                }
+            }
+        }
     }
 }
 
@@ -325,6 +352,101 @@ impl FakeHandle {
     }
 }
 
+enum CommandSink {
+    Mpsc(Sender<(CommandId, PlayerCommand)>),
+    Gst(GstWake),
+}
+
+impl std::fmt::Debug for CommandSink {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mpsc(_) => formatter.write_str("CommandSink::Mpsc"),
+            Self::Gst(_) => formatter.write_str("CommandSink::Gst"),
+        }
+    }
+}
+
+struct GstWake {
+    queue: Arc<Mutex<GstQueue>>,
+    context: gst::glib::MainContext,
+    bridge: Arc<Mutex<Option<GstBridge>>>,
+}
+
+#[derive(Default)]
+struct GstQueue {
+    items: VecDeque<(CommandId, PlayerCommand)>,
+    scheduled: bool,
+}
+
+struct GstBridge {
+    playbin: gst::Element,
+    handler: Arc<dyn Fn(PlayerEvent) + Send + Sync>,
+    generation: Arc<Mutex<LoadGeneration>>,
+    known_duration: Arc<Mutex<Option<Duration>>>,
+    progress_source: Arc<Mutex<Option<gst::glib::SourceId>>>,
+    progress_interval: Arc<Mutex<Duration>>,
+    duration_probes: Arc<Mutex<u32>>,
+    context: gst::glib::MainContext,
+    main_loop: gst::glib::MainLoop,
+    done: SyncSender<()>,
+}
+
+fn drain_gst_commands(queue: &Mutex<GstQueue>, bridge_slot: &Mutex<Option<GstBridge>>) {
+    loop {
+        let mut batch = {
+            let mut queue = queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if queue.items.is_empty() {
+                queue.scheduled = false;
+                return;
+            }
+            queue.items.drain(..).collect::<Vec<_>>()
+        };
+        let mut index = 0;
+        while index < batch.len() {
+            let mut slot = bridge_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(bridge) = slot.as_mut() else {
+                drop(slot);
+                let mut queue = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for command in batch.drain(index..).rev() {
+                    queue.items.push_front(command);
+                }
+                queue.scheduled = false;
+                return;
+            };
+            let (id, command) = batch[index].clone();
+            let shutdown = matches!(command, PlayerCommand::Shutdown);
+            execute_gst_command(
+                id,
+                command,
+                &bridge.playbin,
+                &bridge.handler,
+                &bridge.generation,
+                &bridge.known_duration,
+                &bridge.progress_source,
+                &bridge.progress_interval,
+                &bridge.duration_probes,
+                &bridge.context,
+            );
+            if shutdown {
+                let _ = bridge.playbin.set_state(gst::State::Null);
+                stop_progress(&bridge.progress_source, &bridge.context);
+                (bridge.handler)(PlayerEvent::ShutdownFinished);
+                let _ = bridge.done.send(());
+                bridge.main_loop.quit();
+                return;
+            }
+            drop(slot);
+            index += 1;
+        }
+    }
+}
+
 enum BackendKind {
     GStreamer,
     Fake {
@@ -338,21 +460,53 @@ fn spawn_backend(
     kind: BackendKind,
     handler: impl Fn(PlayerEvent) + Send + Sync + 'static,
 ) -> Player {
-    let (command_tx, command_rx) = mpsc::channel();
     let (done_tx, done_rx) = mpsc::sync_channel(1);
-    let worker = thread::Builder::new()
-        .name("qingyin-player".into())
-        .spawn(move || match kind {
-            BackendKind::GStreamer => run_gst_backend(command_rx, handler, done_tx),
-            BackendKind::Fake {
-                inject,
-                missing,
-                fail_next,
-            } => run_fake_backend(command_rx, inject, missing, fail_next, handler, done_tx),
-        })
-        .ok();
+    let (commands, worker) = match kind {
+        BackendKind::GStreamer => {
+            let queue = Arc::new(Mutex::new(GstQueue::default()));
+            let bridge = Arc::new(Mutex::new(None));
+            let context = gst::glib::MainContext::new();
+            let queue_for_thread = Arc::clone(&queue);
+            let bridge_for_thread = Arc::clone(&bridge);
+            let context_for_thread = context.clone();
+            let worker = thread::Builder::new()
+                .name("qingyin-player".into())
+                .spawn(move || {
+                    run_gst_backend(
+                        queue_for_thread,
+                        bridge_for_thread,
+                        context_for_thread,
+                        handler,
+                        done_tx,
+                    );
+                })
+                .ok();
+            (
+                CommandSink::Gst(GstWake {
+                    queue,
+                    context,
+                    bridge,
+                }),
+                worker,
+            )
+        }
+        BackendKind::Fake {
+            inject,
+            missing,
+            fail_next,
+        } => {
+            let (command_tx, command_rx) = mpsc::channel();
+            let worker = thread::Builder::new()
+                .name("qingyin-player".into())
+                .spawn(move || {
+                    run_fake_backend(command_rx, inject, missing, fail_next, handler, done_tx);
+                })
+                .ok();
+            (CommandSink::Mpsc(command_tx), worker)
+        }
+    };
     Player {
-        commands: command_tx,
+        commands,
         next_id: 0,
         generation: 0,
         requested: PlaybackState::Stopped,
@@ -536,7 +690,9 @@ fn command_kind(command: &PlayerCommand) -> CommandKind {
 }
 
 fn run_gst_backend(
-    commands: Receiver<(CommandId, PlayerCommand)>,
+    queue: Arc<Mutex<GstQueue>>,
+    bridge_slot: Arc<Mutex<Option<GstBridge>>>,
+    context: gst::glib::MainContext,
     handler: impl Fn(PlayerEvent) + Send + Sync + 'static,
     done: SyncSender<()>,
 ) {
@@ -569,7 +725,6 @@ fn run_gst_backend(
         let _ = done.send(());
         return;
     };
-    let context = glib::MainContext::new();
     let main_loop = glib::MainLoop::new(Some(&context), false);
     let generation = Arc::new(Mutex::new(0_u64));
     let known_duration = Arc::new(Mutex::new(None::<Duration>));
@@ -602,78 +757,25 @@ fn run_gst_backend(
             }
         });
         let _watch_id = watch.attach(Some(&context));
-        let command_source = glib::timeout_source_new(
-            Duration::from_millis(10),
-            Some("qingyin-gst-commands"),
-            glib::Priority::DEFAULT,
-            {
-                let playbin = playbin.clone();
-                let handler = Arc::clone(&handler);
-                let generation = Arc::clone(&generation);
-                let known_duration = Arc::clone(&known_duration);
-                let progress_source = Arc::clone(&progress_source);
-                let progress_interval = Arc::clone(&progress_interval);
-                let duration_probes = Arc::clone(&duration_probes);
-                let loop_context = context.clone();
-                let main_loop = main_loop.clone();
-                let commands = Arc::new(Mutex::new(commands));
-                let done = done.clone();
-                move || {
-                    let mut stopping = false;
-                    loop {
-                        let received = commands
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .try_recv();
-                        match received {
-                            Ok((id, command)) => {
-                                if matches!(command, PlayerCommand::Shutdown) {
-                                    execute_gst_command(
-                                        id,
-                                        command,
-                                        &playbin,
-                                        &handler,
-                                        &generation,
-                                        &known_duration,
-                                        &progress_source,
-                                        &progress_interval,
-                                        &duration_probes,
-                                        &loop_context,
-                                    );
-                                    stopping = true;
-                                    break;
-                                }
-                                execute_gst_command(
-                                    id,
-                                    command,
-                                    &playbin,
-                                    &handler,
-                                    &generation,
-                                    &known_duration,
-                                    &progress_source,
-                                    &progress_interval,
-                                    &duration_probes,
-                                    &loop_context,
-                                );
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    if stopping {
-                        let _ = playbin.set_state(gst::State::Null);
-                        stop_progress(&progress_source, &loop_context);
-                        handler(PlayerEvent::ShutdownFinished);
-                        let _ = done.send(());
-                        main_loop.quit();
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
-                    }
-                }
-            },
-        );
-        let _command_id = command_source.attach(Some(&context));
+        {
+            let mut slot = bridge_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *slot = Some(GstBridge {
+                playbin,
+                handler: Arc::clone(&handler),
+                generation: Arc::clone(&generation),
+                known_duration: Arc::clone(&known_duration),
+                progress_source: Arc::clone(&progress_source),
+                progress_interval: Arc::clone(&progress_interval),
+                duration_probes: Arc::clone(&duration_probes),
+                context: context.clone(),
+                main_loop: main_loop.clone(),
+                done,
+            });
+        }
         handler(PlayerEvent::Ready);
+        drain_gst_commands(&queue, &bridge_slot);
         main_loop.run();
     });
 }
@@ -708,11 +810,11 @@ fn execute_gst_command(
     command: PlayerCommand,
     playbin: &gst::Element,
     handler: &Arc<dyn Fn(PlayerEvent) + Send + Sync>,
-    generation: &Mutex<LoadGeneration>,
-    known_duration: &Mutex<Option<Duration>>,
+    generation: &Arc<Mutex<LoadGeneration>>,
+    known_duration: &Arc<Mutex<Option<Duration>>>,
     progress_source: &Mutex<Option<glib::SourceId>>,
     progress_interval: &Mutex<Duration>,
-    duration_probes: &Mutex<u32>,
+    duration_probes: &Arc<Mutex<u32>>,
     context: &glib::MainContext,
 ) {
     let kind = command_kind(&command);
@@ -861,20 +963,22 @@ fn handle_bus_message(
     playbin: &gst::Element,
     message: &gst::Message,
     handler: &Arc<dyn Fn(PlayerEvent) + Send + Sync>,
-    generation: &Mutex<LoadGeneration>,
-    known_duration: &Mutex<Option<Duration>>,
+    generation: &Arc<Mutex<LoadGeneration>>,
+    known_duration: &Arc<Mutex<Option<Duration>>>,
     progress_source: &Mutex<Option<glib::SourceId>>,
     progress_interval: &Mutex<Duration>,
-    duration_probes: &Mutex<u32>,
+    duration_probes: &Arc<Mutex<u32>>,
     context: &glib::MainContext,
 ) {
-    let generation = *generation
+    let generation_now = *generation
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     match message.view() {
-        gst::MessageView::Eos(_) => handler(PlayerEvent::EndOfStream { generation }),
+        gst::MessageView::Eos(_) => handler(PlayerEvent::EndOfStream {
+            generation: generation_now,
+        }),
         gst::MessageView::Error(error) => handler(PlayerEvent::Error {
-            generation,
+            generation: generation_now,
             message: format_bus_error(error),
         }),
         gst::MessageView::StateChanged(changed) if is_playbin_message(playbin, message) => {
@@ -883,12 +987,15 @@ fn handle_bus_message(
                 gst::State::Paused => PlaybackState::Paused,
                 _ => PlaybackState::Stopped,
             };
-            handler(PlayerEvent::StateChanged { generation, state });
+            handler(PlayerEvent::StateChanged {
+                generation: generation_now,
+                state,
+            });
             if state == PlaybackState::Playing {
                 emit_progress(
                     playbin,
                     handler,
-                    generation,
+                    generation_now,
                     known_duration,
                     duration_probes,
                 );
@@ -897,7 +1004,7 @@ fn handle_bus_message(
                     context,
                     playbin,
                     handler,
-                    &Mutex::new(generation),
+                    generation,
                     known_duration,
                     progress_interval,
                     duration_probes,
@@ -914,7 +1021,7 @@ fn handle_bus_message(
                 emit_progress(
                     playbin,
                     handler,
-                    generation,
+                    generation_now,
                     known_duration,
                     duration_probes,
                 );
@@ -930,10 +1037,10 @@ fn start_progress(
     context: &glib::MainContext,
     playbin: &gst::Element,
     handler: &Arc<dyn Fn(PlayerEvent) + Send + Sync>,
-    generation: &Mutex<LoadGeneration>,
-    known_duration: &Mutex<Option<Duration>>,
+    generation: &Arc<Mutex<LoadGeneration>>,
+    known_duration: &Arc<Mutex<Option<Duration>>>,
     progress_interval: &Mutex<Duration>,
-    duration_probes: &Mutex<u32>,
+    duration_probes: &Arc<Mutex<u32>>,
 ) {
     let mut slot = progress_source
         .lock()
@@ -943,21 +1050,9 @@ fn start_progress(
     }
     let playbin = playbin.clone();
     let handler = Arc::clone(handler);
-    let generation = Arc::new(Mutex::new(
-        *generation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    ));
-    let known_duration = Arc::new(Mutex::new(
-        *known_duration
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    ));
-    let duration_probes = Arc::new(Mutex::new(
-        *duration_probes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    ));
+    let generation = Arc::clone(generation);
+    let known_duration = Arc::clone(known_duration);
+    let duration_probes = Arc::clone(duration_probes);
     let interval = *progress_interval
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

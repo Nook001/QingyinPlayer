@@ -6,7 +6,10 @@ use collections::TrackListModel;
 use cstr::cstr;
 use library_session::{HostEvent, LibrarySession};
 use playback::PlaybackController;
-use qingyin_core::{PlayMode, Settings, SettingsLoad, SortColumn};
+#[cfg(test)]
+use qingyin_core::SortColumn;
+use qingyin_core::{PlayMode, Settings, SettingsLoad};
+#[cfg(test)]
 use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
 use qmetaobject::prelude::*;
@@ -319,6 +322,7 @@ fn format_music_folders(directories: &[PathBuf]) -> String {
         .join("\n")
 }
 
+#[cfg(test)]
 pub(crate) fn sort_snapshots(tracks: &mut [TrackSnapshot], column: SortColumn, ascending: bool) {
     tracks.sort_by(|left, right| {
         let ordering = left.cmp_column(right, column);

@@ -212,7 +212,7 @@ Item {
                 text: root.playerBackend.current_title || "未在播放"
                 elide: Text.ElideRight
                 color: root.theme.textColor
-                font.pixelSize: 14
+                font.pixelSize: root.theme.bodySize
                 font.weight: Font.DemiBold
             }
 
@@ -224,7 +224,7 @@ Item {
                 elide: Text.ElideRight
                 color: root.playerBackend.playback_error
                     ? root.theme.accentPressedColor : root.theme.mutedTextColor
-                font.pixelSize: 12
+                font.pixelSize: root.theme.metaSize
             }
         }
     }
@@ -243,7 +243,8 @@ Item {
                 : root.playerBackend.playback_position)
             color: root.theme.mutedTextColor
             horizontalAlignment: Text.AlignRight
-            font.pixelSize: 11
+            font.pixelSize: root.theme.digitSize
+            font.family: root.theme.digitFamily
         }
 
         Row {
@@ -315,7 +316,8 @@ Item {
             width: 38
             text: root.formatTime(root.playerBackend.playback_duration)
             color: root.theme.mutedTextColor
-            font.pixelSize: 11
+            font.pixelSize: root.theme.digitSize
+            font.family: root.theme.digitFamily
         }
     }
 

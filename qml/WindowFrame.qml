@@ -88,7 +88,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.windowHandle.title
                 color: root.theme.mutedTextColor
-                font.pixelSize: 12
+                font.pixelSize: root.theme.metaSize
                 elide: Text.ElideRight
             }
         }
@@ -132,7 +132,7 @@ Item {
                     background: Rectangle {
                         radius: 6
                         color: action.hovered || action.down
-                            ? (action.modelData === "close" ? "#C74242" : root.theme.hoverColor) : "transparent"
+                            ? (action.modelData === "close" ? root.theme.closeColor : root.theme.hoverColor) : "transparent"
                         border.width: action.visualFocus ? 1 : 0
                         border.color: root.theme.accentColor
                     }

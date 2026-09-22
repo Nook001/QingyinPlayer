@@ -99,7 +99,7 @@ FocusScope {
         height: 44
         text: root.displayText
         color: root.currentLyric ? root.theme.accentColor : root.theme.textColor
-        font.pixelSize: 14
+        font.pixelSize: root.theme.bodySize
         font.weight: Font.Medium
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -140,7 +140,7 @@ FocusScope {
                     + (root.playerBackend.current_artist ? " · " + root.playerBackend.current_artist : "")
                 elide: Text.ElideRight
                 color: root.theme.mutedTextColor
-                font.pixelSize: 12
+                font.pixelSize: root.theme.metaSize
             }
             FlatButton {
                 id: previous
@@ -186,7 +186,8 @@ FocusScope {
             Text {
                 text: root.formatTime(progress.pressed ? progress.value : root.playerBackend.playback_position)
                 color: root.theme.mutedTextColor
-                font.pixelSize: 10
+                font.pixelSize: root.theme.digitSize
+                font.family: root.theme.digitFamily
             }
             Slider {
                 id: progress
@@ -228,7 +229,8 @@ FocusScope {
             Text {
                 text: root.formatTime(root.playerBackend.playback_duration)
                 color: root.theme.mutedTextColor
-                font.pixelSize: 10
+                font.pixelSize: root.theme.digitSize
+                font.family: root.theme.digitFamily
             }
         }
     }

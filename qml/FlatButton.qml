@@ -11,7 +11,7 @@ Button {
     property int preferredHeight: 40
     property string iconName
     property int iconSize: 18
-    property int fontPixelSize: 16
+    property int fontPixelSize: 0
     property int fontWeight: Font.Normal
     property int contentAlignment: Text.AlignLeft
     property bool emphasized: false
@@ -37,7 +37,7 @@ Button {
             visible: root.iconName !== ""
             name: root.iconName
             size: root.iconSize
-            color: root.emphasized ? "#FFFFFF" : root.labelColor
+            color: root.emphasized ? root.theme.accentTextColor : root.labelColor
             opacity: root.enabled ? 1 : 0.35
         }
 
@@ -49,9 +49,9 @@ Button {
             opacity: root.enabled ? 1 : 0.35
             horizontalAlignment: root.contentAlignment
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: root.fontPixelSize
+            font.pixelSize: root.fontPixelSize > 0 ? root.fontPixelSize : root.theme.bodySize
             font.weight: root.fontWeight
-            font.letterSpacing: root.fontPixelSize <= 11 ? 0.6 : 0
+            font.letterSpacing: 0
         }
     }
 

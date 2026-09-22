@@ -234,7 +234,7 @@ ApplicationWindow {
                 Rectangle {
                     anchors.fill: parent
                     radius: playerBar.height / 2
-                    color: "#FFFFFF"
+                    color: appTheme.maskColor
                     antialiasing: true
                 }
             }

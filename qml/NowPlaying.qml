@@ -207,7 +207,7 @@ Item {
                 maximumLineCount: 2
                 elide: Text.ElideRight
                 color: root.theme.textColor
-                font.pixelSize: 24
+                font.pixelSize: root.theme.titleSize
                 font.weight: Font.DemiBold
             }
             Text {
@@ -216,7 +216,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
                 color: root.theme.mutedTextColor
-                font.pixelSize: 14
+                font.pixelSize: root.theme.bodySize
             }
             AudioDetails {
                 Layout.fillWidth: true
@@ -280,7 +280,7 @@ Item {
                         wrapMode: Text.Wrap
                         color: lineDelegate.index === root.activeLine
                             ? root.theme.accentColor : root.theme.mutedTextColor
-                        font.pixelSize: root.width < 760 ? 20 : 26
+                        font.pixelSize: root.theme.titleSize
                         font.weight: lineDelegate.index === root.activeLine ? Font.DemiBold : Font.Normal
                         Behavior on color {
                             ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
@@ -304,7 +304,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 color: root.theme.mutedTextColor
-                font.pixelSize: 16
+                font.pixelSize: root.theme.bodySize
             }
             FlatButton {
                 id: resume

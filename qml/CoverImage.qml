@@ -9,6 +9,7 @@ Item {
 
     property url source
     property int displaySize: 44
+    property bool clipOnly: false
     property bool overlayVisible: false
     property string overlayIcon: ""
     property int overlayIconSize: Math.max(14, Math.round(root.displaySize * 0.4))
@@ -52,30 +53,58 @@ Item {
         visible: false
     }
 
-    Item {
-        id: coverMask
+    Loader {
         anchors.fill: parent
-        visible: false
-        layer.enabled: true
-        layer.smooth: true
-
-        Rectangle {
+        active: root.clipOnly
+        visible: active && cover.status === Image.Ready
+        sourceComponent: ShaderEffect {
             anchors.fill: parent
-            radius: root.cornerRadius
-            color: "#FFFFFF"
-            antialiasing: true
+            property variant source: cover
+            property real radius: root.cornerRadius
+            property real coverWidth: width
+            property real coverHeight: height
+            property real overlayAmount: overlayLayer.opacity
+            property real overlayR: root.theme.coverScrimColor.r
+            property real overlayG: root.theme.coverScrimColor.g
+            property real overlayB: root.theme.coverScrimColor.b
+            property real overlayA: root.theme.coverScrimColor.a
+            vertexShader: "qrc:/qml/shaders/roundcover.vert.qsb"
+            fragmentShader: "qrc:/qml/shaders/roundcover.frag.qsb"
         }
     }
 
-    MultiEffect {
+    Loader {
         anchors.fill: parent
-        source: cover
-        maskEnabled: true
-        maskSource: coverMask
-        autoPaddingEnabled: false
-        maskThresholdMin: 0.5
-        maskSpreadAtMin: 1.0
-        visible: cover.status === Image.Ready
+        active: !root.clipOnly
+        visible: active && cover.status === Image.Ready
+        sourceComponent: Item {
+            anchors.fill: parent
+
+            Item {
+                id: coverMask
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                layer.smooth: true
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: root.cornerRadius
+                    color: root.theme.maskColor
+                    antialiasing: true
+                }
+            }
+
+            MultiEffect {
+                anchors.fill: parent
+                source: cover
+                maskEnabled: true
+                maskSource: coverMask
+                autoPaddingEnabled: false
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
+        }
     }
 
     Icon {
@@ -100,15 +129,16 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: root.cornerRadius
-            color: "#6B000000"
+            color: root.theme.coverScrimColor
             antialiasing: true
+            visible: !(root.clipOnly && cover.status === Image.Ready)
         }
 
         Icon {
             anchors.centerIn: parent
             name: root.overlayIcon
             size: root.overlayIconSize
-            color: "#FFFFFF"
+            color: root.theme.accentTextColor
             scale: root.overlayVisible ? 1 : 0.86
             Behavior on scale {
                 NumberAnimation { duration: 140; easing.type: Easing.OutCubic }

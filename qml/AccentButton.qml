@@ -29,15 +29,15 @@ Button {
                 anchors.verticalCenter: parent.verticalCenter
                 name: root.iconName
                 size: root.iconSize
-                color: "#FFFFFF"
+                color: root.theme.accentTextColor
                 opacity: root.enabled ? 1 : 0.5
             }
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.text
-                color: "#FFFFFF"
-                font.pixelSize: 12
+                color: root.theme.accentTextColor
+                font.pixelSize: root.theme.metaSize
                 font.weight: Font.DemiBold
                 opacity: root.enabled ? 1 : 0.5
             }

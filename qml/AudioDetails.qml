@@ -40,7 +40,7 @@ Item {
             color: root.theme.mutedTextColor
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: 12
+            font.pixelSize: root.theme.metaSize
         }
         onClicked: details.open()
     }
@@ -66,7 +66,7 @@ Item {
             Text {
                 text: "源文件信息"
                 color: root.theme.textColor
-                font.pixelSize: 18
+                font.pixelSize: root.theme.bodySize
                 font.weight: Font.DemiBold
             }
             Repeater {
@@ -86,7 +86,7 @@ Item {
                 selectByMouse: true
                 wrapMode: TextEdit.WrapAnywhere
                 color: root.theme.mutedTextColor
-                font.pixelSize: 12
+                font.pixelSize: root.theme.metaSize
                 background: null
                 padding: 0
             }

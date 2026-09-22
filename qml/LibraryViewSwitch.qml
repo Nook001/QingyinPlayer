@@ -91,7 +91,7 @@ Item {
                 contentItem: Text {
                     text: tab.text
                     color: tab.index === root.currentIndex ? root.theme.textColor : root.theme.mutedTextColor
-                    font.pixelSize: 13
+                    font.pixelSize: root.theme.metaSize
                     font.weight: tab.index === root.currentIndex ? Font.Medium : Font.Normal
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter

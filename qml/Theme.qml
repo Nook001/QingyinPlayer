@@ -23,4 +23,14 @@ QtObject {
     readonly property color hoverColor: root.darkTheme ? "#2A302E" : "#EDF0EC"
     readonly property color glassColor: root.darkTheme ? "#B31D2220" : "#B3FAFBF8"
     readonly property color scrimColor: root.darkTheme ? "#73000000" : "#2E000000"
+    readonly property color accentTextColor: "#FFFFFF"
+    readonly property color closeColor: "#C74242"
+    readonly property color maskColor: "#FFFFFF"
+    readonly property color coverScrimColor: "#6B000000"
+
+    readonly property int titleSize: 28
+    readonly property int bodySize: 14
+    readonly property int metaSize: 12
+    readonly property int digitSize: 12
+    readonly property string digitFamily: "monospace"
 }

@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use qingyin_core::SortColumn;
 use qingyin_library::{CollectionEntry, TrackSnapshot};
@@ -36,6 +38,8 @@ fn track_role_names() -> HashMap<i32, QByteArray> {
 fn is_hi_res(audio: &qingyin_metadata::AudioProperties) -> bool {
     audio.bit_depth.unwrap_or(0) >= 24 || audio.sample_rate.unwrap_or(0) >= 88_200
 }
+
+pub(crate) type TrackCatalog = Rc<RefCell<HashMap<i64, TrackSnapshot>>>;
 
 fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
     match role {
@@ -118,105 +122,110 @@ impl CollectionModel {
     }
 }
 
-/// Visible library or search rows bound by the library `TrackTable`.
+/// Visible library or search rows. Row order is track ids; tags live in `catalog`.
 #[allow(missing_debug_implementations)]
 #[derive(QObject, Default)]
 pub struct TrackListModel {
     base: qt_base_class!(trait QAbstractListModel),
-    tracks: Vec<TrackSnapshot>,
+    catalog: TrackCatalog,
+    rows: Vec<i64>,
     index_of_track: qt_method!(
         fn index_of_track(&self, track_id: i64) -> i32 {
-            self.tracks
-                .iter()
-                .position(|track| track.id() == track_id)
-                .and_then(|row| i32::try_from(row).ok())
-                .unwrap_or(-1)
+            row_index_of(&self.rows, track_id)
         }
     ),
     track_id_at: qt_method!(
         fn track_id_at(&self, row: i32) -> i64 {
-            usize::try_from(row)
-                .ok()
-                .and_then(|row| self.tracks.get(row))
-                .map_or(0, TrackSnapshot::id)
+            track_id_at(&self.rows, row)
         }
     ),
 }
 
 impl TrackListModel {
+    pub fn bind_catalog(&mut self, catalog: TrackCatalog) {
+        self.catalog = catalog;
+    }
+
+    /// Test helper: keeps these snapshots in the model's own catalog.
+    #[cfg(test)]
     pub fn replace(&mut self, tracks: Vec<TrackSnapshot>) {
+        let rows = intern_tracks(&self.catalog, tracks);
+        self.set_rows(rows);
+    }
+
+    pub fn set_rows(&mut self, rows: Vec<i64>) {
         self.begin_reset_model();
-        self.tracks = tracks;
+        self.rows = rows;
         self.end_reset_model();
     }
 
     pub fn sort_in_place(&mut self, column: SortColumn, ascending: bool) {
-        if self.tracks.is_empty() {
+        if self.rows.is_empty() {
             return;
         }
-        crate::sort_snapshots(&mut self.tracks, column, ascending);
-        // qmetaobject's list model does not expose layoutChanged; role data for every
-        // row is refreshed so QML bindings keep the same TrackId on each snapshot.
-        if let Ok(last) = i32::try_from(self.tracks.len().saturating_sub(1)) {
+        {
+            let catalog = self.catalog.borrow();
+            sort_row_ids(&mut self.rows, &catalog, column, ascending);
+        }
+        self.notify_all_rows();
+    }
+
+    pub fn upsert_id(&mut self, id: i64) {
+        if let Some(index) = self.rows.iter().position(|row| *row == id) {
+            self.notify_row(index);
+            return;
+        }
+        let Ok(row) = i32::try_from(self.rows.len()) else {
+            return;
+        };
+        self.begin_insert_rows(row, row);
+        self.rows.push(id);
+        self.end_insert_rows();
+    }
+
+    pub fn remove_ids(&mut self, ids: &[i64]) {
+        for id in ids {
+            if let Some(index) = self.rows.iter().position(|row| row == id) {
+                let Ok(row) = i32::try_from(index) else {
+                    continue;
+                };
+                self.begin_remove_rows(row, row);
+                self.rows.remove(index);
+                self.end_remove_rows();
+            }
+        }
+    }
+
+    pub fn notify_track(&mut self, track_id: i64) {
+        if let Some(index) = self.rows.iter().position(|row| *row == track_id) {
+            self.notify_row(index);
+        }
+    }
+
+    fn notify_row(&mut self, index: usize) {
+        if let Ok(row) = i32::try_from(index) {
+            let index = self.row_index(row);
+            self.data_changed(index, index);
+        }
+    }
+
+    fn notify_all_rows(&mut self) {
+        if let Ok(last) = i32::try_from(self.rows.len().saturating_sub(1)) {
             let top = self.row_index(0);
             let bottom = self.row_index(last);
             self.data_changed(top, bottom);
         }
     }
 
-    pub fn upsert(&mut self, snapshot: TrackSnapshot) {
-        if let Some(index) = self
-            .tracks
-            .iter()
-            .position(|track| track.id() == snapshot.id())
-        {
-            self.tracks[index] = snapshot;
-            if let Ok(row) = i32::try_from(index) {
-                let index = self.row_index(row);
-                self.data_changed(index, index);
-            }
-            return;
-        }
-        let Ok(row) = i32::try_from(self.tracks.len()) else {
-            return;
-        };
-        self.begin_insert_rows(row, row);
-        self.tracks.push(snapshot);
-        self.end_insert_rows();
-    }
-
-    pub fn remove_ids(&mut self, ids: &[i64]) {
-        for id in ids {
-            if let Some(index) = self.tracks.iter().position(|track| track.id() == *id) {
-                let Ok(row) = i32::try_from(index) else {
-                    continue;
-                };
-                self.begin_remove_rows(row, row);
-                self.tracks.remove(index);
-                self.end_remove_rows();
-            }
-        }
-    }
-
-    pub fn set_cover(&mut self, track_id: i64, url: String) {
-        if let Some(index) = self.tracks.iter().position(|track| track.id() == track_id) {
-            self.tracks[index].cover_url = url;
-            if let Ok(row) = i32::try_from(index) {
-                let index = self.row_index(row);
-                self.data_changed(index, index);
-            }
-        }
-    }
-
     #[must_use]
     pub fn snapshot(&self) -> Vec<TrackSnapshot> {
-        self.tracks.clone()
+        snapshot_rows(&self.catalog, &self.rows)
     }
 
     #[cfg(test)]
     #[must_use]
     pub fn position_of_id(&self, id: i64) -> Option<usize> {
-        self.tracks.iter().position(|track| track.id() == id)
+        self.rows.iter().position(|row| *row == id)
     }
 }
 
@@ -224,59 +233,60 @@ impl TrackListModel {
 #[derive(QObject, Default)]
 pub struct DetailTrackModel {
     base: qt_base_class!(trait QAbstractListModel),
-    tracks: Vec<TrackSnapshot>,
+    catalog: TrackCatalog,
+    rows: Vec<i64>,
     index_of_track: qt_method!(
         fn index_of_track(&self, track_id: i64) -> i32 {
-            self.tracks
-                .iter()
-                .position(|track| track.id() == track_id)
-                .and_then(|row| i32::try_from(row).ok())
-                .unwrap_or(-1)
+            row_index_of(&self.rows, track_id)
         }
     ),
     track_id_at: qt_method!(
         fn track_id_at(&self, row: i32) -> i64 {
-            usize::try_from(row)
-                .ok()
-                .and_then(|row| self.tracks.get(row))
-                .map_or(0, TrackSnapshot::id)
+            track_id_at(&self.rows, row)
         }
     ),
 }
 
 impl DetailTrackModel {
-    pub fn reset(&mut self, tracks: Vec<TrackSnapshot>) {
+    pub fn bind_catalog(&mut self, catalog: TrackCatalog) {
+        self.catalog = catalog;
+    }
+
+    pub fn set_rows(&mut self, rows: Vec<i64>) {
         self.begin_reset_model();
-        self.tracks = tracks;
+        self.rows = rows;
         self.end_reset_model();
     }
 
-    pub fn set_cover(&mut self, track_id: i64, url: String) {
-        if let Some(index) = self.tracks.iter().position(|track| track.id() == track_id) {
-            self.tracks[index].cover_url = url;
-            if let Ok(row) = i32::try_from(index) {
-                let index = self.row_index(row);
-                self.data_changed(index, index);
-            }
+    pub fn notify_track(&mut self, track_id: i64) {
+        if let Some(index) = self.rows.iter().position(|row| *row == track_id)
+            && let Ok(row) = i32::try_from(index)
+        {
+            let index = self.row_index(row);
+            self.data_changed(index, index);
         }
     }
 
     #[must_use]
     pub fn snapshot(&self) -> Vec<TrackSnapshot> {
-        self.tracks.clone()
+        snapshot_rows(&self.catalog, &self.rows)
     }
 }
 
 impl QAbstractListModel for TrackListModel {
     fn row_count(&self) -> i32 {
-        i32::try_from(self.tracks.len()).unwrap_or(i32::MAX)
+        i32::try_from(self.rows.len()).unwrap_or(i32::MAX)
     }
 
     fn data(&self, index: QModelIndex, role: i32) -> QVariant {
         let Ok(row) = usize::try_from(index.row()) else {
             return QVariant::default();
         };
-        let Some(track) = self.tracks.get(row) else {
+        let Some(id) = self.rows.get(row).copied() else {
+            return QVariant::default();
+        };
+        let catalog = self.catalog.borrow();
+        let Some(track) = catalog.get(&id) else {
             return QVariant::default();
         };
         track_role_data(&track.metadata, &track.cover_url, role)
@@ -289,14 +299,18 @@ impl QAbstractListModel for TrackListModel {
 
 impl QAbstractListModel for DetailTrackModel {
     fn row_count(&self) -> i32 {
-        i32::try_from(self.tracks.len()).unwrap_or(i32::MAX)
+        i32::try_from(self.rows.len()).unwrap_or(i32::MAX)
     }
 
     fn data(&self, index: QModelIndex, role: i32) -> QVariant {
         let Ok(row) = usize::try_from(index.row()) else {
             return QVariant::default();
         };
-        let Some(track) = self.tracks.get(row) else {
+        let Some(id) = self.rows.get(row).copied() else {
+            return QVariant::default();
+        };
+        let catalog = self.catalog.borrow();
+        let Some(track) = catalog.get(&id) else {
             return QVariant::default();
         };
         track_role_data(&track.metadata, &track.cover_url, role)
@@ -342,6 +356,61 @@ impl QAbstractListModel for CollectionModel {
             (COLLECTION_ID_ROLE, "collectionId".into()),
         ])
     }
+}
+
+fn row_index_of(rows: &[i64], track_id: i64) -> i32 {
+    rows.iter()
+        .position(|row| *row == track_id)
+        .and_then(|row| i32::try_from(row).ok())
+        .unwrap_or(-1)
+}
+
+fn track_id_at(rows: &[i64], row: i32) -> i64 {
+    usize::try_from(row)
+        .ok()
+        .and_then(|row| rows.get(row).copied())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+fn intern_tracks(catalog: &TrackCatalog, tracks: Vec<TrackSnapshot>) -> Vec<i64> {
+    let mut catalog = catalog.borrow_mut();
+    let mut rows = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        let id = track.id();
+        catalog.insert(id, track);
+        rows.push(id);
+    }
+    rows
+}
+
+fn snapshot_rows(catalog: &TrackCatalog, rows: &[i64]) -> Vec<TrackSnapshot> {
+    let catalog = catalog.borrow();
+    rows.iter()
+        .filter_map(|id| catalog.get(id).cloned())
+        .collect()
+}
+
+fn sort_row_ids(
+    rows: &mut [i64],
+    catalog: &HashMap<i64, TrackSnapshot>,
+    column: SortColumn,
+    ascending: bool,
+) {
+    rows.sort_by(|left_id, right_id| {
+        let Some(left) = catalog.get(left_id) else {
+            return std::cmp::Ordering::Equal;
+        };
+        let Some(right) = catalog.get(right_id) else {
+            return std::cmp::Ordering::Equal;
+        };
+        let ordering = left.cmp_column(right, column);
+        if ascending {
+            ordering
+        } else {
+            ordering.reverse()
+        }
+    });
 }
 
 #[cfg(test)]

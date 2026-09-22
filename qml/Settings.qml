@@ -32,7 +32,7 @@ Item {
             Text {
                 text: "设置"
                 color: root.theme.textColor
-                font.pixelSize: 28
+                font.pixelSize: root.theme.titleSize
                 font.weight: Font.DemiBold
             }
             Item { Layout.fillWidth: true }
@@ -47,7 +47,7 @@ Item {
         Text {
             text: "主题"
             color: root.theme.textColor
-            font.pixelSize: 16
+            font.pixelSize: root.theme.bodySize
             font.weight: Font.DemiBold
         }
 
@@ -70,7 +70,7 @@ Item {
                     color: root.theme.textColor
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 14
+                    font.pixelSize: root.theme.bodySize
                 }
 
                 background: RoundedRect {
@@ -96,7 +96,7 @@ Item {
                     color: root.theme.textColor
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 14
+                    font.pixelSize: root.theme.bodySize
                 }
 
                 background: RoundedRect {
@@ -111,7 +111,7 @@ Item {
         Text {
             text: "音乐文件夹"
             color: root.theme.textColor
-            font.pixelSize: 16
+            font.pixelSize: root.theme.bodySize
             font.weight: Font.DemiBold
         }
 
@@ -120,7 +120,7 @@ Item {
             visible: root.musicFolders.trim() !== ""
             text: root.musicFolders
             color: root.theme.mutedTextColor
-            font.pixelSize: 13
+            font.pixelSize: root.theme.metaSize
             wrapMode: Text.Wrap
         }
 
@@ -129,7 +129,7 @@ Item {
             visible: root.musicFolders.trim() === ""
             text: "尚未添加音乐文件夹"
             color: root.theme.mutedTextColor
-            font.pixelSize: 13
+            font.pixelSize: root.theme.metaSize
         }
 
         Text {
@@ -137,7 +137,7 @@ Item {
             visible: root.settingsError.trim() !== ""
             text: root.settingsError
             color: root.theme.accentPressedColor
-            font.pixelSize: 13
+            font.pixelSize: root.theme.metaSize
             wrapMode: Text.Wrap
         }
 

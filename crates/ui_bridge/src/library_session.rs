@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
@@ -23,7 +24,7 @@ use qmetaobject::prelude::*;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::collections::{CollectionModel, DetailTrackModel, TrackListModel};
+use crate::collections::{CollectionModel, DetailTrackModel, TrackCatalog, TrackListModel};
 
 const SEARCH_RESULT_LIMIT: usize = 500;
 const WORKER_JOIN: Duration = Duration::from_millis(100);
@@ -159,8 +160,9 @@ struct SearchJob {
 pub struct LibrarySession {
     base: qt_base_class!(trait QObject),
     library_model: qt_property!(RefCell<TrackListModel>; CONST),
-    library_tracks: Vec<TrackSnapshot>,
-    library_by_id: HashMap<i64, TrackSnapshot>,
+    catalog: TrackCatalog,
+    library_order: Vec<i64>,
+    catalog_bound: bool,
     music_directories: Vec<PathBuf>,
     host: Option<Arc<dyn Fn(HostEvent) + Send + Sync>>,
     artist_model: qt_property!(RefCell<CollectionModel>; CONST),
@@ -534,13 +536,7 @@ impl LibrarySession {
             return;
         }
         self.library_revision = self.library_revision.wrapping_add(1);
-        self.library_tracks = snapshot.tracks;
-        self.library_by_id = self
-            .library_tracks
-            .iter()
-            .cloned()
-            .map(|track| (track.id(), track))
-            .collect();
+        self.install_catalog(snapshot.tracks);
         self.publish_track_count();
         if self.search_query.is_empty() {
             self.show_library_tracks();
@@ -582,28 +578,15 @@ impl LibrarySession {
     }
 
     fn apply_cover_update(&mut self, update: CoverUpdate) {
-        if let Some(track) = self.library_by_id.get_mut(&update.track_id) {
-            track.cover_url = update.url.clone();
+        self.ensure_catalog_bound();
+        if let Some(track) = self.catalog.borrow_mut().get_mut(&update.track_id) {
+            track.cover_url = update.url;
         }
-        if let Some(track) = self
-            .library_tracks
-            .iter_mut()
-            .find(|track| track.id() == update.track_id)
-        {
-            track.cover_url = update.url.clone();
-        }
-        self.library_model
-            .borrow_mut()
-            .set_cover(update.track_id, update.url.clone());
-        self.artist_detail
-            .borrow_mut()
-            .set_cover(update.track_id, update.url.clone());
-        self.album_detail
-            .borrow_mut()
-            .set_cover(update.track_id, update.url.clone());
-        self.directory_detail
-            .borrow_mut()
-            .set_cover(update.track_id, update.url);
+        let id = update.track_id;
+        self.library_model.borrow_mut().notify_track(id);
+        self.artist_detail.borrow_mut().notify_track(id);
+        self.album_detail.borrow_mut().notify_track(id);
+        self.directory_detail.borrow_mut().notify_track(id);
     }
 
     fn apply_watch_snapshot(&mut self, snapshot: WatchSnapshot) {
@@ -651,22 +634,31 @@ impl LibrarySession {
             && id_changes <= 8
             && id_changes == summary.upserted + summary.removed;
         if incremental {
-            for id in &summary.removed_ids {
-                self.library_by_id.remove(id);
-                self.library_tracks.retain(|track| track.id() != *id);
-                self.library_model.borrow_mut().remove_ids(&[*id]);
-            }
-            for id in &summary.upserted_ids {
-                if let Some(track) = tracks.iter().find(|track| track.id() == *id).cloned() {
-                    self.library_by_id.insert(*id, track.clone());
-                    if let Some(existing) =
-                        self.library_tracks.iter_mut().find(|item| item.id() == *id)
-                    {
-                        *existing = track.clone();
-                    } else {
-                        self.library_tracks.push(track.clone());
+            self.ensure_catalog_bound();
+            {
+                let mut catalog = self.catalog.borrow_mut();
+                for id in &summary.removed_ids {
+                    catalog.remove(id);
+                }
+                self.library_order
+                    .retain(|id| !summary.removed_ids.contains(id));
+                for track in tracks {
+                    let id = track.id();
+                    if !summary.upserted_ids.contains(&id) {
+                        continue;
                     }
-                    self.library_model.borrow_mut().upsert(track);
+                    if !self.library_order.contains(&id) {
+                        self.library_order.push(id);
+                    }
+                    catalog.insert(id, track);
+                }
+            }
+            self.library_model
+                .borrow_mut()
+                .remove_ids(&summary.removed_ids);
+            if self.search_query.is_empty() {
+                for id in &summary.upserted_ids {
+                    self.library_model.borrow_mut().upsert_id(*id);
                 }
             }
             self.publish_track_count();
@@ -710,34 +702,43 @@ impl LibrarySession {
         };
         let playing = self.playing_track_id;
         let mut protected = Vec::new();
-        if let Some(digest) = self
-            .library_by_id
-            .get(&playing)
-            .and_then(|track| track.metadata.cover_digest.clone())
-        {
-            protected.push(digest);
-        }
-        scheduler.protect(protected);
-        let mut tracks = self.library_tracks.clone();
-        crate::sort_snapshots(&mut tracks, self.sort_column, self.sort_ascending);
-        for (index, track) in tracks.iter().enumerate() {
-            if !track.cover_url.is_empty() {
-                continue;
+        let requests = {
+            let catalog = self.catalog.borrow();
+            if let Some(digest) = catalog
+                .get(&playing)
+                .and_then(|track| track.metadata.cover_digest.clone())
+            {
+                protected.push(digest);
             }
-            let priority = if track.id() == playing {
-                CoverPriority::Playing
-            } else if index < VISIBLE_COVER_HINT {
-                CoverPriority::Visible
-            } else {
-                CoverPriority::Background
-            };
-            scheduler.request(CoverRequest {
-                track_id: track.id(),
-                path: track.metadata.path.clone(),
-                fingerprint: track.metadata.fingerprint(),
-                cover_digest: track.metadata.cover_digest.clone(),
-                priority,
-            });
+            let mut ids = self.library_order.clone();
+            sort_ids_with(&mut ids, &catalog, self.sort_column, self.sort_ascending);
+            ids.into_iter()
+                .enumerate()
+                .filter_map(|(index, id)| {
+                    let track = catalog.get(&id)?;
+                    if !track.cover_url.is_empty() {
+                        return None;
+                    }
+                    let priority = if id == playing {
+                        CoverPriority::Playing
+                    } else if index < VISIBLE_COVER_HINT {
+                        CoverPriority::Visible
+                    } else {
+                        CoverPriority::Background
+                    };
+                    Some(CoverRequest {
+                        track_id: id,
+                        path: track.metadata.path.clone(),
+                        fingerprint: track.metadata.fingerprint(),
+                        cover_digest: track.metadata.cover_digest.clone(),
+                        priority,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        scheduler.protect(protected);
+        for request in requests {
+            scheduler.request(request);
         }
     }
 
@@ -894,12 +895,64 @@ impl LibrarySession {
         true
     }
 
+    fn ensure_catalog_bound(&mut self) {
+        if self.catalog_bound {
+            return;
+        }
+        let catalog = Rc::clone(&self.catalog);
+        self.library_model
+            .borrow_mut()
+            .bind_catalog(Rc::clone(&catalog));
+        self.artist_detail
+            .borrow_mut()
+            .bind_catalog(Rc::clone(&catalog));
+        self.album_detail
+            .borrow_mut()
+            .bind_catalog(Rc::clone(&catalog));
+        self.directory_detail
+            .borrow_mut()
+            .bind_catalog(Rc::clone(&catalog));
+        self.catalog_bound = true;
+    }
+
+    fn install_catalog(&mut self, tracks: Vec<TrackSnapshot>) {
+        self.ensure_catalog_bound();
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.clear();
+        self.library_order.clear();
+        for track in tracks {
+            let id = track.id();
+            self.library_order.push(id);
+            catalog.insert(id, track);
+        }
+    }
+
+    fn intern_ids(&mut self, tracks: Vec<TrackSnapshot>) -> Vec<i64> {
+        self.ensure_catalog_bound();
+        let mut catalog = self.catalog.borrow_mut();
+        let mut ids = Vec::with_capacity(tracks.len());
+        for track in tracks {
+            let id = track.id();
+            catalog.entry(id).or_insert(track);
+            ids.push(id);
+        }
+        ids
+    }
+
+    fn sort_ids(&self, ids: &mut [i64]) {
+        let catalog = self.catalog.borrow();
+        sort_ids_with(ids, &catalog, self.sort_column, self.sort_ascending);
+    }
+
     fn show_library_tracks(&mut self) {
-        self.replace_visible_tracks(self.library_tracks.clone(), true);
+        self.ensure_catalog_bound();
+        let mut ids = self.library_order.clone();
+        self.sort_ids(&mut ids);
+        self.library_model.borrow_mut().set_rows(ids);
     }
 
     fn publish_track_count(&mut self) {
-        let count = i32::try_from(self.library_tracks.len()).unwrap_or(i32::MAX);
+        let count = i32::try_from(self.library_order.len()).unwrap_or(i32::MAX);
         if self.track_count == count {
             return;
         }
@@ -907,11 +960,13 @@ impl LibrarySession {
         self.track_count_changed();
     }
 
-    fn replace_visible_tracks(&mut self, mut tracks: Vec<TrackSnapshot>, apply_sort: bool) {
+    fn replace_visible_tracks(&mut self, tracks: Vec<TrackSnapshot>, apply_sort: bool) {
+        self.ensure_catalog_bound();
+        let mut ids = self.intern_ids(tracks);
         if apply_sort {
-            crate::sort_snapshots(&mut tracks, self.sort_column, self.sort_ascending);
+            self.sort_ids(&mut ids);
         }
-        self.library_model.borrow_mut().replace(tracks);
+        self.library_model.borrow_mut().set_rows(ids);
     }
 
     fn apply_collections(
@@ -964,7 +1019,7 @@ impl LibrarySession {
         self.selected_artist_subtitle = QString::default();
         self.selected_artist_cover = QString::default();
         self.selected_artist_id.clear();
-        self.artist_detail.borrow_mut().reset(Vec::new());
+        self.artist_detail.borrow_mut().set_rows(Vec::new());
         self.collections_changed();
     }
 
@@ -981,7 +1036,8 @@ impl LibrarySession {
         self.selected_artist = entry.name.into();
         self.selected_artist_subtitle = entry.subtitle.into();
         self.selected_artist_cover = entry.cover_url.into();
-        self.artist_detail.borrow_mut().reset(entry.tracks);
+        let ids = self.intern_ids(entry.tracks);
+        self.artist_detail.borrow_mut().set_rows(ids);
         self.collections_changed();
     }
 
@@ -993,7 +1049,7 @@ impl LibrarySession {
         self.selected_album_subtitle = QString::default();
         self.selected_album_cover = QString::default();
         self.selected_album_id.clear();
-        self.album_detail.borrow_mut().reset(Vec::new());
+        self.album_detail.borrow_mut().set_rows(Vec::new());
         self.collections_changed();
     }
 
@@ -1010,7 +1066,8 @@ impl LibrarySession {
         self.selected_album = entry.name.into();
         self.selected_album_subtitle = entry.subtitle.into();
         self.selected_album_cover = entry.cover_url.into();
-        self.album_detail.borrow_mut().reset(entry.tracks);
+        let ids = self.intern_ids(entry.tracks);
+        self.album_detail.borrow_mut().set_rows(ids);
         self.collections_changed();
     }
     fn close_directory_internal(&mut self) {
@@ -1021,7 +1078,7 @@ impl LibrarySession {
         self.selected_directory_subtitle = QString::default();
         self.selected_directory_cover = QString::default();
         self.selected_directory_id.clear();
-        self.directory_detail.borrow_mut().reset(Vec::new());
+        self.directory_detail.borrow_mut().set_rows(Vec::new());
         self.collections_changed();
     }
 
@@ -1038,7 +1095,8 @@ impl LibrarySession {
         self.selected_directory = entry.name.into();
         self.selected_directory_subtitle = entry.subtitle.into();
         self.selected_directory_cover = entry.cover_url.into();
-        self.directory_detail.borrow_mut().reset(entry.tracks);
+        let ids = self.intern_ids(entry.tracks);
+        self.directory_detail.borrow_mut().set_rows(ids);
         self.collections_changed();
     }
 }
@@ -1234,6 +1292,28 @@ fn watch_status(summary: &WatchSummary) -> String {
     status
 }
 
+fn sort_ids_with(
+    ids: &mut [i64],
+    catalog: &HashMap<i64, TrackSnapshot>,
+    column: SortColumn,
+    ascending: bool,
+) {
+    ids.sort_by(|left_id, right_id| {
+        let Some(left) = catalog.get(left_id) else {
+            return std::cmp::Ordering::Equal;
+        };
+        let Some(right) = catalog.get(right_id) else {
+            return std::cmp::Ordering::Equal;
+        };
+        let ordering = left.cmp_column(right, column);
+        if ascending {
+            ordering
+        } else {
+            ordering.reverse()
+        }
+    });
+}
+
 fn database_path() -> Result<PathBuf, LibraryIoError> {
     let dirs = XdgDirs::resolve().map_err(|_| LibraryIoError::MissingDataHome)?;
     std::fs::create_dir_all(&dirs.data).map_err(|source| LibraryIoError::CreateDataDir {
@@ -1317,7 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn track_count_follows_library_tracks() {
+    fn track_count_follows_library_order() {
         let mut session = LibrarySession::default();
         assert_eq!(session.track_count, 0);
         let mut metadata = TrackMetadata::from_display(
@@ -1328,12 +1408,40 @@ mod tests {
             None,
         );
         metadata.id = 1;
-        session.library_tracks = vec![TrackSnapshot::from_metadata(metadata)];
+        session.install_catalog(vec![TrackSnapshot::from_metadata(metadata)]);
         session.publish_track_count();
         assert_eq!(session.track_count, 1);
-        session.library_tracks.clear();
+        session.library_order.clear();
         session.publish_track_count();
         assert_eq!(session.track_count, 0);
+    }
+
+    #[test]
+    fn visible_rows_share_the_catalog_arc() {
+        let mut metadata = TrackMetadata::from_display(
+            PathBuf::from("/music/a.flac"),
+            "Song",
+            None,
+            Vec::new(),
+            None,
+        );
+        metadata.id = 7;
+        let mut session = LibrarySession::default();
+        let (tx, rx) = mpsc::channel();
+        session.set_host(move |event| {
+            tx.send(event).unwrap();
+        });
+        session.install_catalog(vec![TrackSnapshot::from_metadata(metadata)]);
+        session.show_library_tracks();
+        session.play_track(7);
+        let HostEvent::Play { tracks: queue, .. } = rx.recv().unwrap() else {
+            panic!("expected playback queue");
+        };
+        let catalog = session.catalog.borrow();
+        assert!(Arc::ptr_eq(
+            &queue[0].metadata,
+            &catalog.get(&7).unwrap().metadata
+        ));
     }
 
     #[test]

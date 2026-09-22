@@ -52,7 +52,9 @@ pub(crate) struct PlaybackEngine {
     pub mode: PlayMode,
     pub shuffle_order: Vec<usize>,
     pub shuffle_index: usize,
-    pending_command: Option<(CommandId, CommandKind)>,
+    pending_commands: Vec<(CommandId, CommandKind)>,
+    load_failed: bool,
+    stop_after_load_failure: bool,
 }
 
 impl Default for PlaybackEngine {
@@ -76,7 +78,9 @@ impl Default for PlaybackEngine {
             mode: PlayMode::Sequential,
             shuffle_order: Vec::new(),
             shuffle_index: 0,
-            pending_command: None,
+            pending_commands: Vec::new(),
+            load_failed: false,
+            stop_after_load_failure: false,
         }
     }
 }
@@ -89,16 +93,21 @@ impl PlaybackEngine {
                 NotifySet::identity()
             }
             PlayerEvent::CommandFinished { id, kind, error } => {
-                if self
-                    .pending_command
-                    .is_some_and(|(pending, pending_kind)| pending == id && pending_kind == kind)
-                {
-                    self.pending_command = None;
+                let tracked = self.take_pending(id, kind);
+                if kind == CommandKind::Load && error.is_some() {
+                    self.load_failed = true;
+                    self.stop_after_load_failure = true;
                 }
-                error.map_or_else(NotifySet::default, |error| self.apply_failure(error))
+                if tracked && let Some(error) = error {
+                    return self.apply_failure(error);
+                }
+                NotifySet::default()
             }
             PlayerEvent::StateChanged { generation, state } => {
                 if generation != self.generation {
+                    return NotifySet::default();
+                }
+                if self.load_failed && state != PlaybackState::Stopped {
                     return NotifySet::default();
                 }
                 self.confirmed = state;
@@ -150,6 +159,23 @@ impl PlaybackEngine {
             notify.position = true;
         }
         notify
+    }
+
+    pub fn note_pending(&mut self, id: CommandId, kind: CommandKind) {
+        self.pending_commands.push((id, kind));
+    }
+
+    fn take_pending(&mut self, id: CommandId, kind: CommandKind) -> bool {
+        let before = self.pending_commands.len();
+        self.pending_commands
+            .retain(|(pending, pending_kind)| !(*pending == id && *pending_kind == kind));
+        self.pending_commands.len() != before
+    }
+
+    pub fn take_stop_after_load_failure(&mut self) -> bool {
+        let stop = self.stop_after_load_failure;
+        self.stop_after_load_failure = false;
+        stop
     }
 
     pub fn apply_failure(&mut self, error: String) -> NotifySet {
@@ -552,14 +578,15 @@ impl PlaybackController {
             return;
         };
         let load_id = player.load(&track.metadata.path);
-        self.engine.pending_command = Some((load_id, CommandKind::Load));
+        self.engine.load_failed = false;
+        self.engine.note_pending(load_id, CommandKind::Load);
         self.engine.generation = player.generation();
         self.engine.current = Some(index);
         self.engine.sync_shuffle_index(index);
         self.engine.requested = PlaybackState::Playing;
         self.engine.publish_current();
         let play_id = player.play();
-        self.engine.pending_command = Some((play_id, CommandKind::Play));
+        self.engine.note_pending(play_id, CommandKind::Play);
         self.publish_track_details();
         self.publish_identity();
         self.publish_position();
@@ -694,14 +721,14 @@ impl PlaybackController {
             self.engine.requested = PlaybackState::Playing;
             player.play()
         };
-        self.engine.pending_command = Some((
+        self.engine.note_pending(
             id,
             if self.engine.requested == PlaybackState::Paused {
                 CommandKind::Pause
             } else {
                 CommandKind::Play
             },
-        ));
+        );
         self.publish_identity();
     }
 
@@ -738,7 +765,7 @@ impl PlaybackController {
             return;
         };
         let id = player.seek(Duration::from_millis(position_millis));
-        self.engine.pending_command = Some((id, CommandKind::Seek));
+        self.engine.note_pending(id, CommandKind::Seek);
         self.engine.position_ms = position;
         self.publish_position();
     }
@@ -765,6 +792,12 @@ impl PlaybackController {
     fn handle_player_event(&mut self, event: PlayerEvent) {
         let eos = matches!(event, PlayerEvent::EndOfStream { generation } if generation == self.engine.generation);
         let notify = self.engine.handle_event(event);
+        if self.engine.take_stop_after_load_failure()
+            && let Some(player) = self.player.as_mut()
+        {
+            let id = player.stop();
+            self.engine.note_pending(id, CommandKind::Stop);
+        }
         if self.engine.ready
             && let Some(index) = self.engine.pending_row.take()
         {
@@ -910,6 +943,33 @@ mod tests {
         assert_eq!(engine.position_ms, 0);
         assert_eq!(engine.error, "missing decoder");
         assert!(notify.identity && notify.position);
+    }
+
+    #[test]
+    fn load_failure_survives_the_following_play_command() {
+        let mut engine = PlaybackEngine::default();
+        engine.generation = 5;
+        engine.note_pending(1, CommandKind::Load);
+        engine.note_pending(2, CommandKind::Play);
+        engine.handle_event(PlayerEvent::CommandFinished {
+            id: 1,
+            kind: CommandKind::Load,
+            error: Some("missing file".into()),
+        });
+        assert_eq!(engine.confirmed, PlaybackState::Stopped);
+        assert_eq!(engine.error, "missing file");
+        assert!(engine.take_stop_after_load_failure());
+        engine.handle_event(PlayerEvent::CommandFinished {
+            id: 2,
+            kind: CommandKind::Play,
+            error: None,
+        });
+        engine.handle_event(PlayerEvent::StateChanged {
+            generation: 5,
+            state: PlaybackState::Playing,
+        });
+        assert_eq!(engine.confirmed, PlaybackState::Stopped);
+        assert_eq!(engine.error, "missing file");
     }
 
     #[test]

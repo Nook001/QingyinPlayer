@@ -75,7 +75,7 @@ Item {
                 Text {
                     text: root.showingDetail ? root.selectedName : root.title
                     color: root.theme.textColor
-                    font.pixelSize: 28
+                    font.pixelSize: root.theme.titleSize
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                     Layout.fillWidth: true
@@ -85,7 +85,7 @@ Item {
                     visible: root.showingDetail
                     text: root.selectedSubtitle
                     color: root.theme.mutedTextColor
-                    font.pixelSize: 13
+                    font.pixelSize: root.theme.metaSize
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -173,7 +173,7 @@ Item {
                             text: collectionCard.name
                             color: root.theme.textColor
                             elide: Text.ElideRight
-                            font.pixelSize: 14
+                            font.pixelSize: root.theme.bodySize
                             font.weight: Font.DemiBold
                         }
 
@@ -182,7 +182,7 @@ Item {
                             text: collectionCard.subtitle
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
-                            font.pixelSize: 12
+                            font.pixelSize: root.theme.metaSize
                         }
                     }
 
@@ -210,7 +210,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.filterQuery.trim() ? "没有找到匹配的" + root.title : root.emptyTitle
                     color: root.theme.textColor
-                    font.pixelSize: 18
+                    font.pixelSize: root.theme.bodySize
                     font.weight: Font.DemiBold
                 }
 
@@ -219,7 +219,7 @@ Item {
                     text: root.emptySubtitle
                     visible: !root.filterQuery.trim()
                     color: root.theme.mutedTextColor
-                    font.pixelSize: 13
+                    font.pixelSize: root.theme.metaSize
                 }
             }
         }
@@ -277,7 +277,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: collectionRow.name
                                 color: root.theme.textColor
-                                font.pixelSize: 14
+                                font.pixelSize: root.theme.bodySize
                                 font.weight: Font.Medium
                                 elide: Text.ElideRight
                             }
@@ -285,7 +285,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: collectionRow.subtitle
                                 color: root.theme.mutedTextColor
-                                font.pixelSize: 12
+                                font.pixelSize: root.theme.metaSize
                                 elide: Text.ElideMiddle
                             }
                         }
@@ -309,7 +309,7 @@ Item {
                 visible: collectionList.count === 0
                 text: root.filterQuery.trim() ? "没有找到匹配的" + root.title : root.emptyTitle
                 color: root.theme.mutedTextColor
-                font.pixelSize: 16
+                font.pixelSize: root.theme.bodySize
             }
         }
     }

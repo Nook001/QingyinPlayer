@@ -23,6 +23,14 @@ Item {
         readonly property color artworkColor: "#e8e3da"
         readonly property color surfaceColor: "#fafbf8"
         readonly property color glassColor: "#b3fafbf8"
+        readonly property color accentTextColor: "#FFFFFF"
+        readonly property color maskColor: "#FFFFFF"
+        readonly property color coverScrimColor: "#6B000000"
+        readonly property int titleSize: 28
+        readonly property int bodySize: 14
+        readonly property int metaSize: 12
+        readonly property int digitSize: 12
+        readonly property string digitFamily: "monospace"
         readonly property bool darkTheme: false
     }
 

@@ -135,9 +135,9 @@ Item {
                     text: "#"
                     color: root.theme.mutedTextColor
                     horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 11
-                    font.weight: Font.Medium
-                    font.family: "monospace"
+                font.pixelSize: root.theme.digitSize
+                font.weight: Font.Medium
+                font.family: root.theme.digitFamily
                 }
 
                 Item {
@@ -155,7 +155,7 @@ Item {
                     theme: root.theme
                     enabled: root.sortable
                     contentAlignment: Text.AlignLeft
-                    fontPixelSize: 11
+                    fontPixelSize: root.theme.metaSize
                     fontWeight: Font.Medium
                     labelColor: root.theme.mutedTextColor
                     text: root.heading("标题", "title")
@@ -173,7 +173,7 @@ Item {
                     theme: root.theme
                     enabled: root.sortable
                     contentAlignment: Text.AlignLeft
-                    fontPixelSize: 11
+                    fontPixelSize: root.theme.metaSize
                     fontWeight: Font.Medium
                     labelColor: root.theme.mutedTextColor
                     text: root.heading("专辑", "album")
@@ -190,7 +190,7 @@ Item {
                     theme: root.theme
                     enabled: root.sortable
                     contentAlignment: Text.AlignRight
-                    fontPixelSize: 11
+                    fontPixelSize: root.theme.metaSize
                     fontWeight: Font.Medium
                     labelColor: root.theme.mutedTextColor
                     text: root.heading("时长", "duration")
@@ -276,8 +276,8 @@ Item {
                                 anchors.centerIn: parent
                                 text: String(trackRow.index + 1).padStart(2, "0")
                                 color: trackRow.isCurrent ? root.theme.accentColor : root.theme.mutedTextColor
-                                font.pixelSize: 12
-                                font.family: "monospace"
+                                font.pixelSize: root.theme.digitSize
+                                font.family: root.theme.digitFamily
                             }
                         }
 
@@ -292,6 +292,7 @@ Item {
                                 id: rowCover
                                 anchors.centerIn: parent
                                 displaySize: root.coverWidth
+                                clipOnly: true
                                 theme: root.theme
                                 source: trackRow.cover
                                 overlayVisible: trackRow.hovered
@@ -334,7 +335,7 @@ Item {
                                 color: trackRow.isCurrent ? root.theme.accentColor : root.theme.textColor
                                 elide: Text.ElideRight
                                 horizontalAlignment: Text.AlignLeft
-                                font.pixelSize: 14
+                                font.pixelSize: root.theme.bodySize
                                 font.weight: Font.DemiBold
                             }
 
@@ -360,7 +361,7 @@ Item {
                                         anchors.centerIn: parent
                                         text: "Hi-Res"
                                         color: root.theme.accentColor
-                                        font.pixelSize: 10
+                                        font.pixelSize: root.theme.metaSize
                                         font.weight: Font.Medium
                                     }
                                 }
@@ -372,7 +373,7 @@ Item {
                                     color: root.theme.mutedTextColor
                                     elide: Text.ElideRight
                                     horizontalAlignment: Text.AlignLeft
-                                    font.pixelSize: 12
+                                    font.pixelSize: root.theme.metaSize
                                 }
                             }
                         }
@@ -385,7 +386,7 @@ Item {
                             text: trackRow.album
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
-                            font.pixelSize: 12
+                            font.pixelSize: root.theme.metaSize
                         }
 
                         Text {
@@ -395,7 +396,8 @@ Item {
                             text: trackRow.duration
                             color: root.theme.mutedTextColor
                             horizontalAlignment: Text.AlignRight
-                            font.pixelSize: 12
+                            font.pixelSize: root.theme.digitSize
+                            font.family: root.theme.digitFamily
                         }
                     }
 
