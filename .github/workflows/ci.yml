@@ -14,7 +14,7 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -24,24 +24,16 @@ jobs:
             cmake \
             pkg-config \
             libclang-dev \
-            qt6-base-dev \
-            qt6-base-dev-tools \
-            qt6-declarative-dev \
-            qtdeclarative6-dev-tools \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qt-labs-folderlistmodel \
-            qml6-module-qtquick-dialogs \
-            qml6-module-qtquick-effects \
-            qml6-module-qtquick-shapes \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-tools
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          cache: true
       - name: Install Rust 1.92
         uses: dtolnay/rust-toolchain@1.92.0
         with:

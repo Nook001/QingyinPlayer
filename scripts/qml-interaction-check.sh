@@ -3,6 +3,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 runner="${QMLTESTRUNNER:-}"
+if [[ -z "$runner" && -n "${QT_ROOT_DIR:-}" && -x "$QT_ROOT_DIR/bin/qmltestrunner" ]]; then
+  runner="$QT_ROOT_DIR/bin/qmltestrunner"
+fi
 if [[ -z "$runner" ]]; then
   for candidate in /usr/lib/qt6/bin/qmltestrunner qmltestrunner6 qmltestrunner; do
     if command -v "$candidate" >/dev/null 2>&1 || [[ -x "$candidate" ]]; then

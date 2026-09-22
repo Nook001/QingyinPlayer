@@ -3,6 +3,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 qmllint_bin="${QMLLINT:-}"
+if [[ -z "$qmllint_bin" && -n "${QT_ROOT_DIR:-}" && -x "$QT_ROOT_DIR/bin/qmllint" ]]; then
+  qmllint_bin="$QT_ROOT_DIR/bin/qmllint"
+fi
 if [[ -z "$qmllint_bin" ]]; then
   for candidate in /usr/lib/qt6/bin/qmllint /usr/bin/qmllint6 qmllint; do
     if command -v "$candidate" >/dev/null 2>&1 || [[ -x "$candidate" ]]; then
