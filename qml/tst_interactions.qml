@@ -35,8 +35,8 @@ Item {
         }
         function track_id_at(row) { return row >= 0 && row < count ? get(row).trackId : 0 }
 
-        ListElement { title: "B"; artist: "乙"; album: "二"; duration: "0:10"; cover: ""; trackId: 2 }
-        ListElement { title: "A"; artist: "甲"; album: "一"; duration: "0:09"; cover: ""; trackId: 1 }
+        ListElement { title: "B"; artist: "乙"; album: "二"; duration: "0:10"; cover: ""; trackId: 2; hiRes: false }
+        ListElement { title: "A"; artist: "甲"; album: "一"; duration: "0:09"; cover: ""; trackId: 1; hiRes: true }
     }
 
     property int activatedId: 0
@@ -110,6 +110,11 @@ Item {
             keyClick(Qt.Key_Return)
             tryCompare(root, "activatedId", 1)
             tracks.move(1, 0, 1)
+        }
+
+        function test_hires_badge_on_title() {
+            verify(!findChild(table, "rowHiRes2").visible)
+            verify(findChild(table, "rowHiRes1").visible)
         }
 
         function test_playback_marker_survives_pause() {

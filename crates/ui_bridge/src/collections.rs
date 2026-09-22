@@ -12,6 +12,7 @@ pub(crate) const TRACK_DURATION_ROLE: i32 = TRACK_TITLE_ROLE + 3;
 pub(crate) const TRACK_PATH_ROLE: i32 = TRACK_TITLE_ROLE + 4;
 pub(crate) const TRACK_COVER_ROLE: i32 = TRACK_TITLE_ROLE + 5;
 pub(crate) const TRACK_ID_ROLE: i32 = TRACK_TITLE_ROLE + 6;
+pub(crate) const TRACK_HI_RES_ROLE: i32 = TRACK_TITLE_ROLE + 7;
 
 const COLLECTION_NAME_ROLE: i32 = 0x0100;
 const COLLECTION_SUBTITLE_ROLE: i32 = COLLECTION_NAME_ROLE + 1;
@@ -28,7 +29,12 @@ fn track_role_names() -> HashMap<i32, QByteArray> {
         (TRACK_PATH_ROLE, "path".into()),
         (TRACK_COVER_ROLE, "cover".into()),
         (TRACK_ID_ROLE, "trackId".into()),
+        (TRACK_HI_RES_ROLE, "hiRes".into()),
     ])
+}
+
+fn is_hi_res(audio: &qingyin_metadata::AudioProperties) -> bool {
+    audio.bit_depth.unwrap_or(0) >= 24 || audio.sample_rate.unwrap_or(0) >= 88_200
 }
 
 fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
@@ -40,6 +46,7 @@ fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
         TRACK_PATH_ROLE => QString::from(track.path.to_string_lossy().as_ref()).into(),
         TRACK_COVER_ROLE => QString::from(cover).into(),
         TRACK_ID_ROLE => track.id.into(),
+        TRACK_HI_RES_ROLE => is_hi_res(&track.audio).into(),
         _ => QVariant::default(),
     }
 }
@@ -414,6 +421,27 @@ mod tests {
                 .to_qstring()
                 .to_string(),
             "2:05"
+        );
+        assert_eq!(
+            track_role_data(&track, "", TRACK_HI_RES_ROLE),
+            QVariant::from(false)
+        );
+        let mut hires = track.clone();
+        hires.audio.bit_depth = Some(24);
+        assert_eq!(
+            track_role_data(&hires, "", TRACK_HI_RES_ROLE),
+            QVariant::from(true)
+        );
+        hires.audio.bit_depth = None;
+        hires.audio.sample_rate = Some(88_200);
+        assert_eq!(
+            track_role_data(&hires, "", TRACK_HI_RES_ROLE),
+            QVariant::from(true)
+        );
+        hires.audio.sample_rate = Some(44_100);
+        assert_eq!(
+            track_role_data(&hires, "", TRACK_HI_RES_ROLE),
+            QVariant::from(false)
         );
     }
 

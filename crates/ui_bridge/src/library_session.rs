@@ -183,6 +183,8 @@ pub struct LibrarySession {
     selected_directory_id: String,
     playing_track_id: i64,
     collections_changed: qt_signal!(),
+    track_count: qt_property!(i32; NOTIFY track_count_changed),
+    track_count_changed: qt_signal!(),
     search_generation: u64,
     search_query: qt_property!(QString; NOTIFY search_changed),
     searching: qt_property!(bool; NOTIFY search_changed),
@@ -539,6 +541,7 @@ impl LibrarySession {
             .cloned()
             .map(|track| (track.id(), track))
             .collect();
+        self.publish_track_count();
         if self.search_query.is_empty() {
             self.show_library_tracks();
         } else {
@@ -666,6 +669,7 @@ impl LibrarySession {
                     self.library_model.borrow_mut().upsert(track);
                 }
             }
+            self.publish_track_count();
             self.apply_collections(artists, albums, directories);
             self.library_revision = self.library_revision.wrapping_add(1);
             self.queue_missing_covers();
@@ -892,6 +896,15 @@ impl LibrarySession {
 
     fn show_library_tracks(&mut self) {
         self.replace_visible_tracks(self.library_tracks.clone(), true);
+    }
+
+    fn publish_track_count(&mut self) {
+        let count = i32::try_from(self.library_tracks.len()).unwrap_or(i32::MAX);
+        if self.track_count == count {
+            return;
+        }
+        self.track_count = count;
+        self.track_count_changed();
     }
 
     fn replace_visible_tracks(&mut self, mut tracks: Vec<TrackSnapshot>, apply_sort: bool) {
@@ -1301,6 +1314,26 @@ mod tests {
         mailbox.send(1);
         mailbox.send(2);
         assert_eq!(mailbox.recv_timeout(Duration::from_millis(10)), Some(2));
+    }
+
+    #[test]
+    fn track_count_follows_library_tracks() {
+        let mut session = LibrarySession::default();
+        assert_eq!(session.track_count, 0);
+        let mut metadata = TrackMetadata::from_display(
+            PathBuf::from("/music/a.flac"),
+            "Song",
+            None,
+            Vec::new(),
+            None,
+        );
+        metadata.id = 1;
+        session.library_tracks = vec![TrackSnapshot::from_metadata(metadata)];
+        session.publish_track_count();
+        assert_eq!(session.track_count, 1);
+        session.library_tracks.clear();
+        session.publish_track_count();
+        assert_eq!(session.track_count, 0);
     }
 
     #[test]

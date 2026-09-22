@@ -27,7 +27,7 @@ Rectangle {
     Component.onCompleted: {
         for (let i = 0; i < 100; ++i)
             tracks.append({ title: "歌曲 " + i, artist: "歌手", album: "专辑",
-                duration: "3:20", cover: "", trackId: i + 1 })
+                duration: "3:20", cover: "", trackId: i + 1, hiRes: false })
     }
 
     QtObject {
@@ -55,6 +55,7 @@ Rectangle {
         property bool searching: false
         property bool busy: false
         property bool scanning: false
+        property int track_count: 100
         property string scan_status: ""
         property string watch_status: ""
         property string openedDirectory: ""
@@ -93,6 +94,7 @@ Rectangle {
             session.selected_directory = ""
             session.openedDirectory = ""
             session.playedTrack = 0
+            session.track_count = 100
             page = createTemporaryObject(pageComponent, root, { width: 960, height: 720 })
             verify(page)
             waitForRendering(page)
@@ -103,6 +105,14 @@ Rectangle {
             verify(button)
             mouseClick(button)
             tryCompare(page, "browseMode", index)
+        }
+
+        function test_track_count_label() {
+            const label = findChild(page, "libraryTrackCount")
+            verify(label.visible)
+            compare(label.text, "100 首")
+            session.track_count = 0
+            verify(!label.visible)
         }
 
         function test_switches_all_four_views() {

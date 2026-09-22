@@ -20,8 +20,10 @@ Item {
     property int endSpacerCount: 3
     readonly property int rowHeight: 58
     readonly property int indexWidth: 28
-    readonly property int albumWidth: 168
-    readonly property int durationWidth: 48
+    readonly property int coverWidth: 44
+    readonly property int durationWidth: 56
+    readonly property int titleStretch: 6
+    readonly property int albumStretch: 4
     readonly property alias count: trackList.count
     readonly property alias contentY: trackList.contentY
 
@@ -138,8 +140,17 @@ Item {
                     font.family: "monospace"
                 }
 
+                Item {
+                    Layout.preferredWidth: root.coverWidth
+                    Layout.minimumWidth: root.coverWidth
+                    Layout.maximumWidth: root.coverWidth
+                }
+
                 FlatButton {
                     Layout.fillWidth: true
+                    Layout.horizontalStretchFactor: root.titleStretch
+                    Layout.preferredWidth: 0
+                    Layout.minimumWidth: 120
                     preferredHeight: 28
                     theme: root.theme
                     enabled: root.sortable
@@ -154,7 +165,10 @@ Item {
                 }
 
                 FlatButton {
-                    Layout.preferredWidth: root.albumWidth
+                    Layout.fillWidth: true
+                    Layout.horizontalStretchFactor: root.albumStretch
+                    Layout.preferredWidth: 0
+                    Layout.minimumWidth: 80
                     preferredHeight: 28
                     theme: root.theme
                     enabled: root.sortable
@@ -170,6 +184,8 @@ Item {
 
                 FlatButton {
                     Layout.preferredWidth: root.durationWidth
+                    Layout.minimumWidth: root.durationWidth
+                    Layout.maximumWidth: root.durationWidth
                     preferredHeight: 28
                     theme: root.theme
                     enabled: root.sortable
@@ -223,6 +239,7 @@ Item {
                     required property string duration
                     required property string cover
                     required property int trackId
+                    required property bool hiRes
                     objectName: "trackRow" + trackId
                     readonly property bool isCurrent: trackId === root.currentTrackId
                         && root.playbackState !== "stopped"
@@ -265,16 +282,16 @@ Item {
                         }
 
                         Item {
-                            Layout.preferredWidth: 44
-                            Layout.minimumWidth: 44
-                            Layout.maximumWidth: 44
+                            Layout.preferredWidth: root.coverWidth
+                            Layout.minimumWidth: root.coverWidth
+                            Layout.maximumWidth: root.coverWidth
                             Layout.preferredHeight: 44
                             Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
 
                             CoverImage {
                                 id: rowCover
                                 anchors.centerIn: parent
-                                displaySize: 44
+                                displaySize: root.coverWidth
                                 theme: root.theme
                                 source: trackRow.cover
                                 overlayVisible: trackRow.hovered
@@ -305,6 +322,9 @@ Item {
 
                         ColumnLayout {
                             Layout.fillWidth: true
+                            Layout.horizontalStretchFactor: root.titleStretch
+                            Layout.preferredWidth: 0
+                            Layout.minimumWidth: 120
                             spacing: 2
 
                             Text {
@@ -318,19 +338,50 @@ Item {
                                 font.weight: Font.DemiBold
                             }
 
-                            Text {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                Layout.alignment: Qt.AlignLeft
-                                text: trackRow.artist || "未知歌手"
-                                color: root.theme.mutedTextColor
-                                elide: Text.ElideRight
-                                horizontalAlignment: Text.AlignLeft
-                                font.pixelSize: 12
+                                spacing: 6
+
+                                Item {
+                                    objectName: "rowHiRes" + trackRow.trackId
+                                    visible: trackRow.hiRes
+                                    Layout.alignment: Qt.AlignVCenter
+                                    implicitWidth: hiResLabel.implicitWidth + 12
+                                    implicitHeight: 16
+
+                                    RoundedRect {
+                                        anchors.fill: parent
+                                        radius: height / 2
+                                        color: root.theme.subtleColor
+                                    }
+
+                                    Text {
+                                        id: hiResLabel
+                                        anchors.centerIn: parent
+                                        text: "Hi-Res"
+                                        color: root.theme.accentColor
+                                        font.pixelSize: 10
+                                        font.weight: Font.Medium
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                                    text: trackRow.artist || "未知歌手"
+                                    color: root.theme.mutedTextColor
+                                    elide: Text.ElideRight
+                                    horizontalAlignment: Text.AlignLeft
+                                    font.pixelSize: 12
+                                }
                             }
                         }
 
                         Text {
-                            Layout.preferredWidth: root.albumWidth
+                            Layout.fillWidth: true
+                            Layout.horizontalStretchFactor: root.albumStretch
+                            Layout.preferredWidth: 0
+                            Layout.minimumWidth: 80
                             text: trackRow.album
                             color: root.theme.mutedTextColor
                             elide: Text.ElideRight
@@ -339,6 +390,8 @@ Item {
 
                         Text {
                             Layout.preferredWidth: root.durationWidth
+                            Layout.minimumWidth: root.durationWidth
+                            Layout.maximumWidth: root.durationWidth
                             text: trackRow.duration
                             color: root.theme.mutedTextColor
                             horizontalAlignment: Text.AlignRight

@@ -165,15 +165,15 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: 18
-        anchors.rightMargin: 18
-        anchors.topMargin: 28
+        anchors.leftMargin: 14
+        anchors.rightMargin: 14
+        anchors.topMargin: 10
         anchors.bottomMargin: 0
-        spacing: 20
+        spacing: 10
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 8
 
             RowLayout {
                 spacing: 8
@@ -192,6 +192,14 @@ Item {
                     font.pixelSize: 28
                     font.weight: Font.DemiBold
                 }
+
+                Text {
+                    objectName: "libraryTrackCount"
+                    visible: root.session.track_count > 0
+                    text: root.session.track_count + " 首"
+                    color: root.theme.mutedTextColor
+                    font.pixelSize: 14
+                }
             }
 
             Text {
@@ -209,52 +217,13 @@ Item {
                 visible: root.headerStatusText === ""
             }
 
-            FlatButton {
-                theme: root.theme
-                text: "添加目录"
-                filled: true
-                fontPixelSize: 13
-                contentAlignment: Text.AlignHCenter
-                preferredWidth: 108
-                preferredHeight: 32
-                enabled: !root.session.busy
-                onClicked: folderDialog.open()
-            }
-
-            FlatButton {
-                objectName: "librarySettingsButton"
-                theme: root.theme
-                filled: true
-                preferredWidth: 32
-                preferredHeight: 32
-                iconName: "settings"
-                Accessible.name: "设置"
-                onClicked: root.settingsRequested()
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 16
-
-            LibraryViewSwitch {
-                objectName: "libraryViewSwitch"
-                Layout.alignment: Qt.AlignVCenter
-                Layout.preferredHeight: 32
-                theme: root.theme
-                currentIndex: root.browseMode
-                onCurrentIndexChanged: root.browseMode = currentIndex
-            }
-
-            Item { Layout.fillWidth: true }
-
             TextField {
                 id: searchField
                 objectName: "librarySearchField"
 
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: 220
-                Layout.maximumWidth: 260
+                Layout.preferredWidth: 168
+                Layout.maximumWidth: 188
                 Layout.preferredHeight: 32
                 placeholderText: ["搜索歌曲", "搜索歌手", "搜索专辑或歌手", "搜索文件夹或路径"][root.browseMode]
                 placeholderTextColor: root.theme.mutedTextColor
@@ -322,6 +291,45 @@ Item {
                             ? root.theme.textColor : root.theme.mutedTextColor
                     }
                 }
+            }
+
+            FlatButton {
+                theme: root.theme
+                text: "添加目录"
+                filled: true
+                fontPixelSize: 13
+                contentAlignment: Text.AlignHCenter
+                preferredWidth: 108
+                preferredHeight: 32
+                enabled: !root.session.busy
+                onClicked: folderDialog.open()
+            }
+
+            FlatButton {
+                objectName: "librarySettingsButton"
+                theme: root.theme
+                filled: true
+                preferredWidth: 32
+                preferredHeight: 32
+                iconName: "settings"
+                Accessible.name: "设置"
+                onClicked: root.settingsRequested()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Item { Layout.fillWidth: true }
+
+            LibraryViewSwitch {
+                objectName: "libraryViewSwitch"
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredHeight: 32
+                theme: root.theme
+                currentIndex: root.browseMode
+                onCurrentIndexChanged: root.browseMode = currentIndex
             }
         }
 
