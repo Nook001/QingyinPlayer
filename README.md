@@ -111,8 +111,6 @@ qingyin/
 
 运行时真正的编排者是 `AppBridge`。曲库页绑定 `LibrarySession`，曲库表绑定 `TrackListModel`，播放栏绑定 `PlaybackController`。扫描与监听的 `queued_callback` 回到 `LibrarySession`。关闭时设置、曲库 worker 与播放后端都有期限。
 
-历史指针假死记录的证据状态见 [docs/pointer-freeze-evidence-2026-09-20.md](docs/pointer-freeze-evidence-2026-09-20.md)。该文不改写 [docs/code-quality-assessment-2026-09-20.md](docs/code-quality-assessment-2026-09-20.md) 的评估结论。
-
 ## 模块依赖
 
 箭头表示 **Cargo 依赖方向**（只允许指向更底层的 crate）。
