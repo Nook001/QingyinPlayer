@@ -13,6 +13,7 @@ Item {
     signal revealTrackRequested(int trackId)
     signal nowPlayingRequested()
     signal capsuleRequested()
+    property bool queueOpen: false
 
     focus: true
 
@@ -322,6 +323,23 @@ Item {
     }
 
     FlatButton {
+        objectName: "toggleQueue"
+        anchors.right: enterCapsule.left
+        anchors.rightMargin: 4
+        anchors.verticalCenter: parent.verticalCenter
+        preferredWidth: 30
+        preferredHeight: 36
+        theme: root.theme
+        iconName: "list"
+        iconSize: 16
+        Accessible.name: root.queueOpen ? "关闭正在播放" : "正在播放"
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        onClicked: root.queueOpen = !root.queueOpen
+    }
+
+    FlatButton {
+        id: enterCapsule
         objectName: "enterCapsule"
         anchors.right: volumeCluster.left
         anchors.rightMargin: 4

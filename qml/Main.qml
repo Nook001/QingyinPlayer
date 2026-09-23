@@ -253,6 +253,27 @@ ApplicationWindow {
             }
         }
 
+        MouseArea {
+            anchors.fill: parent
+            z: 3
+            visible: playerBar.queueOpen
+            onClicked: playerBar.queueOpen = false
+        }
+
+        QueuePanel {
+            id: queuePanel
+            z: 4
+            visible: playerBar.queueOpen
+            anchors.left: playerBar.left
+            anchors.right: playerBar.right
+            anchors.bottom: playerBar.top
+            anchors.bottomMargin: 8
+            height: Math.min(420, Math.max(160, parent.height * 0.5))
+            theme: appTheme
+            playerBackend: backend.playback
+            onCloseRequested: playerBar.queueOpen = false
+        }
+
         PlayerBar {
             id: playerBar
             z: 3

@@ -22,7 +22,7 @@ const COLLECTION_COVER_ROLE: i32 = COLLECTION_NAME_ROLE + 2;
 const COLLECTION_TRACK_COUNT_ROLE: i32 = COLLECTION_NAME_ROLE + 3;
 const COLLECTION_ID_ROLE: i32 = COLLECTION_NAME_ROLE + 4;
 
-fn track_role_names() -> HashMap<i32, QByteArray> {
+pub(crate) fn track_role_names() -> HashMap<i32, QByteArray> {
     HashMap::from([
         (TRACK_TITLE_ROLE, "title".into()),
         (TRACK_ARTIST_ROLE, "artist".into()),
@@ -41,7 +41,7 @@ fn is_hi_res(audio: &qingyin_metadata::AudioProperties) -> bool {
 
 pub(crate) type TrackCatalog = Rc<RefCell<HashMap<i64, TrackSnapshot>>>;
 
-fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
+pub(crate) fn track_role_data(track: &TrackMetadata, cover: &str, role: i32) -> QVariant {
     match role {
         TRACK_TITLE_ROLE => QString::from(track.title.as_str()).into(),
         TRACK_ARTIST_ROLE => QString::from(track.artists.join("、")).into(),

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,6 +10,8 @@ use qingyin_player::{
 };
 use qmetaobject::prelude::*;
 use qmetaobject::{QVariantList, QVariantMap};
+
+use crate::collections::{track_role_data, track_role_names};
 use rand::seq::SliceRandom;
 use rand::{Rng, rng};
 
@@ -283,6 +286,147 @@ impl PlaybackEngine {
         }
     }
 
+    pub fn remove_at(&mut self, index: usize) -> Option<bool> {
+        if index >= self.queue.len() {
+            return None;
+        }
+        let removed_current = self.current == Some(index);
+        self.queue.remove(index);
+        self.current = match self.current {
+            Some(current) if current == index => {
+                if self.queue.is_empty() {
+                    None
+                } else if index < self.queue.len() {
+                    Some(index)
+                } else {
+                    Some(self.queue.len() - 1)
+                }
+            }
+            Some(current) if current > index => Some(current - 1),
+            other => other,
+        };
+        self.remap_shuffle_after_remove(index);
+        if self.current.is_none() {
+            self.title.clear();
+            self.artist.clear();
+            self.cover.clear();
+            self.duration_ms = 0;
+            self.position_ms = 0;
+            self.displayed_second = 0;
+        }
+        Some(removed_current)
+    }
+
+    /// Order rows will actually play. Shuffle uses the shuffled walk, not the source list.
+    pub fn playback_order(&mut self) -> Vec<usize> {
+        self.ensure_shuffle_order();
+        self.navigation_order()
+    }
+
+    pub fn current_playback_row(&mut self) -> Option<usize> {
+        let current = self.current?;
+        self.playback_order()
+            .into_iter()
+            .position(|index| index == current)
+    }
+
+    pub fn queue_index_at_playback_row(&mut self, row: usize) -> Option<usize> {
+        self.playback_order().get(row).copied()
+    }
+
+    /// Removes a row from the order the listener sees. The following row becomes current.
+    pub fn remove_playback_row(&mut self, row: usize) -> Option<bool> {
+        let order = self.playback_order();
+        let queue_index = *order.get(row)?;
+        let removed_current = self.current == Some(queue_index);
+        let successor = if removed_current {
+            order.get(row + 1).copied().or_else(|| {
+                if row > 0 {
+                    order.get(row - 1).copied()
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        self.remove_at(queue_index)?;
+        if removed_current {
+            self.current = successor.and_then(|previous| {
+                if previous == queue_index {
+                    None
+                } else if previous > queue_index {
+                    Some(previous - 1)
+                } else {
+                    Some(previous)
+                }
+            });
+            if let Some(current) = self.current {
+                self.sync_shuffle_index(current);
+            } else {
+                self.title.clear();
+                self.artist.clear();
+                self.cover.clear();
+                self.duration_ms = 0;
+                self.position_ms = 0;
+                self.displayed_second = 0;
+            }
+        }
+        Some(removed_current)
+    }
+
+    /// Reorders the sequence that will play. In shuffle mode the source list stays put.
+    pub fn move_playback_row(&mut self, from: usize, to: usize) -> bool {
+        if self.mode == PlayMode::Shuffle {
+            self.ensure_shuffle_order();
+            let len = self.shuffle_order.len();
+            if from == to || from >= len || to >= len {
+                return false;
+            }
+            let index = self.shuffle_order.remove(from);
+            self.shuffle_order.insert(to, index);
+            if let Some(current) = self.current {
+                self.sync_shuffle_index(current);
+            }
+            return true;
+        }
+        self.move_item(from, to)
+    }
+
+    pub fn move_item(&mut self, from: usize, to: usize) -> bool {
+        let len = self.queue.len();
+        if from == to || from >= len || to >= len {
+            return false;
+        }
+        let track = self.queue.remove(from);
+        self.queue.insert(to, track);
+        self.current = self.current.map(|index| remap_moved_index(index, from, to));
+        self.shuffle_order = self
+            .shuffle_order
+            .iter()
+            .copied()
+            .map(|index| remap_moved_index(index, from, to))
+            .collect();
+        if let Some(current) = self.current {
+            self.sync_shuffle_index(current);
+        }
+        true
+    }
+
+    fn remap_shuffle_after_remove(&mut self, removed: usize) {
+        let mut order = Vec::with_capacity(self.shuffle_order.len());
+        for index in self.shuffle_order.iter().copied() {
+            if index == removed {
+                continue;
+            }
+            order.push(if index > removed { index - 1 } else { index });
+        }
+        self.shuffle_order = order;
+        if let Some(current) = self.current {
+            self.sync_shuffle_index(current);
+        }
+    }
+
     pub fn prepare_queue(&mut self, current: usize) {
         self.current = Some(current);
         if self.mode == PlayMode::Shuffle {
@@ -379,6 +523,19 @@ fn shuffle_order_from<R: Rng + ?Sized>(len: usize, first: usize, rng: &mut R) ->
     std::iter::once(first).chain(rest).collect()
 }
 
+fn remap_moved_index(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        return to;
+    }
+    if from < to && index > from && index <= to {
+        return index - 1;
+    }
+    if to < from && index >= to && index < from {
+        return index + 1;
+    }
+    index
+}
+
 fn shuffle_order_avoiding<R: Rng + ?Sized>(len: usize, avoid: usize, rng: &mut R) -> Vec<usize> {
     if len == 0 {
         return Vec::new();
@@ -391,6 +548,42 @@ fn shuffle_order_avoiding<R: Rng + ?Sized>(len: usize, avoid: usize, rng: &mut R
     order
 }
 
+/// Tracks in the order they will play. Shuffle mode stores that walk here.
+#[allow(missing_debug_implementations)]
+#[derive(QObject, Default)]
+pub struct QueueModel {
+    base: qt_base_class!(trait QAbstractListModel),
+    tracks: Vec<TrackSnapshot>,
+}
+
+impl QueueModel {
+    pub fn reset(&mut self, tracks: Vec<TrackSnapshot>) {
+        self.begin_reset_model();
+        self.tracks = tracks;
+        self.end_reset_model();
+    }
+}
+
+impl QAbstractListModel for QueueModel {
+    fn row_count(&self) -> i32 {
+        i32::try_from(self.tracks.len()).unwrap_or(i32::MAX)
+    }
+
+    fn data(&self, index: QModelIndex, role: i32) -> QVariant {
+        let Ok(row) = usize::try_from(index.row()) else {
+            return QVariant::default();
+        };
+        let Some(track) = self.tracks.get(row) else {
+            return QVariant::default();
+        };
+        track_role_data(&track.metadata, &track.cover_url, role)
+    }
+
+    fn role_names(&self) -> std::collections::HashMap<i32, qmetaobject::QByteArray> {
+        track_role_names()
+    }
+}
+
 /// Load/play/EOS/progress/volume, bound by `PlayerBar`.
 #[allow(missing_debug_implementations)]
 #[derive(QObject, Default)]
@@ -399,6 +592,8 @@ pub struct PlaybackController {
     player: Option<Player>,
     fake: Option<FakeHandle>,
     engine: PlaybackEngine,
+    queue_model: qt_property!(RefCell<QueueModel>; CONST),
+    current_queue_index: qt_property!(i32; NOTIFY playback_changed),
     persist_volume: Option<Arc<dyn Fn(f64) + Send + Sync>>,
     persist_play_mode: Option<Arc<dyn Fn(PlayMode) + Send + Sync>>,
     playback_state: qt_property!(QString; NOTIFY playback_changed),
@@ -487,6 +682,21 @@ pub struct PlaybackController {
             }
         }
     ),
+    play_queue_row: qt_method!(
+        fn play_queue_row(&mut self, row: i32) {
+            self.play_queue_row_internal(row);
+        }
+    ),
+    remove_queue_row: qt_method!(
+        fn remove_queue_row(&mut self, row: i32) {
+            self.remove_queue_row_internal(row);
+        }
+    ),
+    move_queue_row: qt_method!(
+        fn move_queue_row(&mut self, from: i32, to: i32) {
+            self.move_queue_row_internal(from, to);
+        }
+    ),
 }
 
 impl PlaybackController {
@@ -519,6 +729,8 @@ impl PlaybackController {
 
     pub fn apply_saved_play_mode(&mut self, mode: PlayMode) {
         self.engine.set_mode(mode);
+        self.sync_queue_model();
+        self.publish_identity();
         self.publish_play_mode();
     }
 
@@ -539,6 +751,8 @@ impl PlaybackController {
         {
             self.engine.prepare_queue(index);
             self.play_queue_index(index);
+        } else {
+            self.sync_queue_model();
         }
     }
 
@@ -588,6 +802,7 @@ impl PlaybackController {
         let play_id = player.play();
         self.engine.note_pending(play_id, CommandKind::Play);
         self.publish_track_details();
+        self.sync_queue_model();
         self.publish_identity();
         self.publish_position();
         self.publish_duration();
@@ -742,6 +957,8 @@ impl PlaybackController {
     fn cycle_play_mode_internal(&mut self) {
         let mode = self.engine.mode.cycled();
         self.engine.set_mode(mode);
+        self.sync_queue_model();
+        self.publish_identity();
         self.publish_play_mode();
         if let Some(persist) = &self.persist_play_mode {
             persist(mode);
@@ -833,6 +1050,11 @@ impl PlaybackController {
     }
 
     fn publish_identity(&mut self) {
+        self.current_queue_index = self
+            .engine
+            .current_playback_row()
+            .and_then(|index| i32::try_from(index).ok())
+            .unwrap_or(-1);
         self.current_track_id = self
             .engine
             .current
@@ -863,6 +1085,60 @@ impl PlaybackController {
     fn publish_play_mode(&mut self) {
         self.play_mode = self.engine.mode.as_str().into();
         self.play_mode_changed();
+    }
+
+    fn sync_queue_model(&mut self) {
+        let order = self.engine.playback_order();
+        let tracks = order
+            .iter()
+            .filter_map(|index| self.engine.queue.get(*index).cloned())
+            .collect();
+        self.queue_model.borrow_mut().reset(tracks);
+    }
+
+    fn play_queue_row_internal(&mut self, row: i32) {
+        let Ok(display) = usize::try_from(row) else {
+            return;
+        };
+        let Some(index) = self.engine.queue_index_at_playback_row(display) else {
+            return;
+        };
+        self.engine.sync_shuffle_index(index);
+        self.play_queue_index(index);
+    }
+
+    fn remove_queue_row_internal(&mut self, row: i32) {
+        let Ok(display) = usize::try_from(row) else {
+            return;
+        };
+        let Some(removed_current) = self.engine.remove_playback_row(display) else {
+            return;
+        };
+        if removed_current {
+            if let Some(next) = self.engine.current {
+                self.play_queue_index(next);
+            } else {
+                self.sync_queue_model();
+                self.stop_playback_silently();
+            }
+        } else {
+            self.sync_queue_model();
+            self.publish_identity();
+        }
+    }
+
+    fn move_queue_row_internal(&mut self, from: i32, to: i32) {
+        let Ok(from_index) = usize::try_from(from) else {
+            return;
+        };
+        let Ok(to_index) = usize::try_from(to) else {
+            return;
+        };
+        if !self.engine.move_playback_row(from_index, to_index) {
+            return;
+        }
+        self.sync_queue_model();
+        self.publish_identity();
     }
 
     fn stop_playback_silently(&mut self) {
@@ -986,6 +1262,78 @@ mod tests {
             engine.skip_missing(|path| path.ends_with("c.flac")),
             Some(2)
         );
+    }
+
+    #[test]
+    fn remove_keeps_the_current_track_and_shuffle_sequence() {
+        let mut engine = queued_engine(4);
+        engine.mode = PlayMode::Shuffle;
+        engine.current = Some(1);
+        engine.shuffle_order = vec![1, 3, 0, 2];
+        engine.shuffle_index = 0;
+        assert_eq!(engine.remove_at(0), Some(false));
+        assert_eq!(engine.current, Some(0));
+        assert_eq!(engine.queue[0].metadata.title, "t1");
+        assert_eq!(
+            shuffle_titles(&engine),
+            vec!["t1".to_string(), "t3".to_string(), "t2".to_string()]
+        );
+    }
+
+    #[test]
+    fn removing_the_current_track_selects_the_next_row() {
+        let mut engine = queued_engine(3);
+        engine.current = Some(1);
+        assert_eq!(engine.remove_at(1), Some(true));
+        assert_eq!(engine.current, Some(1));
+        assert_eq!(engine.queue[1].metadata.title, "t2");
+        assert_eq!(engine.remove_at(1), Some(true));
+        assert_eq!(engine.current, Some(0));
+        assert_eq!(engine.queue[0].metadata.title, "t0");
+    }
+
+    #[test]
+    fn shuffle_list_order_is_the_order_that_plays_next() {
+        let mut engine = queued_engine(4);
+        engine.mode = PlayMode::Shuffle;
+        engine.current = Some(1);
+        engine.shuffle_order = vec![1, 3, 0, 2];
+        engine.shuffle_index = 0;
+        assert_eq!(engine.playback_order(), vec![1, 3, 0, 2]);
+        assert_eq!(engine.current_playback_row(), Some(0));
+        assert_eq!(engine.next_index(), Some(3));
+        assert!(engine.move_playback_row(1, 3));
+        assert_eq!(engine.playback_order(), vec![1, 0, 2, 3]);
+        assert_eq!(engine.next_index(), Some(0));
+    }
+
+    #[test]
+    fn move_changes_display_order_without_changing_shuffle_tracks() {
+        let mut engine = queued_engine(4);
+        engine.mode = PlayMode::Shuffle;
+        engine.current = Some(0);
+        engine.shuffle_order = vec![0, 2, 1, 3];
+        engine.shuffle_index = 0;
+        let before = shuffle_titles(&engine);
+        assert!(engine.move_item(0, 2));
+        assert_eq!(engine.current, Some(2));
+        assert_eq!(
+            engine
+                .queue
+                .iter()
+                .map(|track| track.metadata.title.as_str())
+                .collect::<Vec<_>>(),
+            ["t1", "t2", "t0", "t3"]
+        );
+        assert_eq!(shuffle_titles(&engine), before);
+    }
+
+    fn shuffle_titles(engine: &PlaybackEngine) -> Vec<String> {
+        engine
+            .shuffle_order
+            .iter()
+            .map(|index| engine.queue[*index].metadata.title.clone())
+            .collect()
     }
 
     #[test]

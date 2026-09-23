@@ -67,6 +67,8 @@ Item {
             return "M5 5h14v14H5z"
         case "windowRestore":
             return "M8 5h11v11M5 8h11v11H5z"
+        case "list":
+            return "M8 6h13M8 12h13M8 18h13M4 6h.01M4 12h.01M4 18h.01"
         case "capsule":
             return "M8 7h8a5 5 0 0 1 0 10H8A5 5 0 0 1 8 7zM8 10v4"
         case "expand":
