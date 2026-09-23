@@ -21,6 +21,8 @@ Item {
     readonly property int cornerRadius: fullscreen || maximized ? 0 : 16
     readonly property int titleBarHeight: fullscreen ? 0 : 36
     readonly property alias contentItem: body
+    property real leadingWidth: 0
+    signal capsuleRequested()
 
     function toggleMaximized() {
         if (maximized) windowHandle.showNormal()
@@ -42,7 +44,7 @@ Item {
         anchors.fill: parent
         anchors.topMargin: root.titleBarHeight
         anchors.bottomMargin: root.cornerRadius
-        anchors.leftMargin: root.cornerRadius > 0 ? 1 : 0
+        anchors.leftMargin: (root.cornerRadius > 0 ? 1 : 0) + root.leadingWidth
         anchors.rightMargin: root.cornerRadius > 0 ? 1 : 0
         clip: true
     }
@@ -51,7 +53,9 @@ Item {
         id: titleBar
         objectName: "windowTitleBar"
         anchors.top: parent.top
-        width: parent.width
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: root.leadingWidth
         height: root.titleBarHeight
         visible: !root.fullscreen
 
@@ -86,6 +90,7 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
+                visible: root.leadingWidth <= 0
                 text: root.windowHandle.title
                 color: root.theme.mutedTextColor
                 font.pixelSize: root.theme.metaSize
@@ -99,7 +104,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 4
             Repeater {
-                model: ["minimize", "maximize", "close"]
+                model: ["capsule", "minimize", "maximize", "close"]
                 ToolButton {
                     id: action
                     required property string modelData
@@ -108,14 +113,19 @@ Item {
                     height: 28
                     padding: 0
                     hoverEnabled: true
-                    readonly property string label: modelData === "close" ? "关闭"
-                        : modelData === "minimize" ? "最小化" : root.maximized ? "还原" : "最大化"
+                    readonly property string label: {
+                        if (modelData === "close") return "关闭"
+                        if (modelData === "minimize") return "最小化"
+                        if (modelData === "capsule") return "胶囊"
+                        return root.maximized ? "还原" : "最大化"
+                    }
                     Accessible.name: label
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
                     ToolTip.text: label
                     onClicked: {
-                        if (modelData === "close") root.windowHandle.close()
+                        if (modelData === "capsule") root.capsuleRequested()
+                        else if (modelData === "close") root.windowHandle.close()
                         else if (modelData === "minimize") root.windowHandle.showMinimized()
                         else root.toggleMaximized()
                     }
@@ -123,9 +133,12 @@ Item {
                         Icon {
                             anchors.centerIn: parent
                             size: 14
-                            name: action.modelData === "close" ? "close"
-                                : action.modelData === "minimize" ? "windowMinimize"
-                                : root.maximized ? "windowRestore" : "windowMaximize"
+                            name: {
+                                if (action.modelData === "capsule") return "capsule"
+                                if (action.modelData === "close") return "close"
+                                if (action.modelData === "minimize") return "windowMinimize"
+                                return root.maximized ? "windowRestore" : "windowMaximize"
+                            }
                             color: action.modelData === "close" && action.hovered ? "white" : root.theme.textColor
                         }
                     }

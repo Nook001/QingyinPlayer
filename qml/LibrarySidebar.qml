@@ -9,12 +9,21 @@ Item {
 
     required property var theme
     required property var session
+    property string title: ""
 
     signal libraryRequested()
     signal playlistRequested(int playlistId)
     signal settingsRequested()
 
+    readonly property int expandedWidth: 196
+    readonly property int collapsedWidth: 88
+    property bool collapsed: false
     property int renamingPlaylistId: 0
+
+    onCollapsedChanged: {
+        if (root.collapsed)
+            root.cancelRename()
+    }
 
     function commitRename(name) {
         const playlistId = root.renamingPlaylistId
@@ -29,11 +38,6 @@ Item {
     }
 
     Rectangle {
-        anchors.fill: parent
-        color: root.theme.backgroundColor
-    }
-
-    Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -43,12 +47,49 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 6
+        anchors.bottomMargin: 10
+        spacing: 0
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 36
+            Layout.leftMargin: root.collapsed ? 8 : 16
+            Layout.rightMargin: 8
+            spacing: 4
+
+            Text {
+                Layout.fillWidth: true
+                text: root.title
+                color: root.theme.mutedTextColor
+                font.pixelSize: root.theme.metaSize
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            FlatButton {
+                theme: root.theme
+                iconName: root.collapsed ? "chevronRight" : "chevronLeft"
+                iconSize: 16
+                preferredWidth: 28
+                preferredHeight: 28
+                Accessible.name: root.collapsed ? "展开侧边栏" : "折叠侧边栏"
+                onClicked: root.collapsed = !root.collapsed
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.leftMargin: root.collapsed ? 6 : 10
+            Layout.rightMargin: root.collapsed ? 6 : 10
+            Layout.topMargin: 6
+            spacing: 6
 
         SidebarRow {
             theme: root.theme
+            iconName: "library"
             label: "曲库"
+            compact: root.collapsed
             selected: !root.session.playlist_open
             onClicked: root.libraryRequested()
         }
@@ -58,14 +99,23 @@ Item {
         RowLayout {
             Layout.fillWidth: true
 
+            Item {
+                Layout.fillWidth: true
+                visible: root.collapsed
+            }
+
             Text {
+                visible: !root.collapsed
                 text: "歌单"
                 color: root.theme.mutedTextColor
                 font.pixelSize: root.theme.metaSize
                 font.weight: Font.Medium
             }
 
-            Item { Layout.fillWidth: true }
+            Item {
+                Layout.fillWidth: true
+                visible: !root.collapsed
+            }
 
             FlatButton {
                 theme: root.theme
@@ -75,6 +125,11 @@ Item {
                 preferredHeight: 28
                 Accessible.name: "新建歌单"
                 onClicked: root.session.create_playlist()
+            }
+
+            Item {
+                Layout.fillWidth: true
+                visible: root.collapsed
             }
         }
 
@@ -102,7 +157,8 @@ Item {
                     theme: root.theme
                     label: playlistEntry.name
                     detail: playlistEntry.trackCount + " 首"
-                    showPencil: true
+                    compact: root.collapsed
+                    showPencil: !root.collapsed
                     selected: root.session.playlist_open
                         && playlistEntry.playlistId === root.session.selected_playlist_id
                     onClicked: root.playlistRequested(playlistEntry.playlistId)
@@ -167,8 +223,11 @@ Item {
         SidebarRow {
             objectName: "librarySettingsButton"
             theme: root.theme
+            iconName: "settings"
             label: "设置"
+            compact: root.collapsed
             onClicked: root.settingsRequested()
+        }
         }
     }
 
@@ -176,12 +235,16 @@ Item {
         id: row
 
         property var theme
+        property string iconName: ""
         property string label
         property string detail: ""
         property bool selected: false
+        property bool compact: false
         property bool showPencil: false
         signal clicked()
         signal pencilClicked()
+
+        readonly property bool iconOnly: row.compact && row.iconName !== ""
 
         implicitHeight: 36
         Layout.fillWidth: true
@@ -193,17 +256,41 @@ Item {
                 : (rowHover.hovered ? row.theme.hoverColor : "transparent")
         }
 
+        Icon {
+            anchors.centerIn: parent
+            visible: row.iconOnly
+            name: row.iconName
+            size: 18
+            color: row.theme.textColor
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            visible: row.iconOnly
+            onClicked: row.clicked()
+        }
+
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 10
+            anchors.leftMargin: row.compact ? 6 : 8
             anchors.rightMargin: 4
-            spacing: 4
+            spacing: 8
+            visible: !row.iconOnly
+
+            Icon {
+                visible: row.iconName !== ""
+                name: row.iconName
+                size: 18
+                color: row.theme.textColor
+                Layout.alignment: Qt.AlignVCenter
+            }
 
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
                 Text {
+                    id: labelText
                     anchors.fill: parent
                     verticalAlignment: Text.AlignVCenter
                     text: row.label
@@ -220,7 +307,7 @@ Item {
             }
 
             Text {
-                visible: row.detail !== "" && !pencilButton.visible
+                visible: !row.compact && row.detail !== "" && !pencilButton.visible
                 text: row.detail
                 color: row.theme.mutedTextColor
                 font.pixelSize: row.theme.metaSize
@@ -240,5 +327,9 @@ Item {
         }
 
         HoverHandler { id: rowHover }
+
+        ToolTip.visible: rowHover.hovered && (row.iconOnly || labelText.truncated)
+        ToolTip.text: row.label
+        ToolTip.delay: 400
     }
 }

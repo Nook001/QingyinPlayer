@@ -158,29 +158,42 @@ ApplicationWindow {
         anchors.fill: parent
         theme: appTheme
         windowHandle: window
+        leadingWidth: window.currentView === 0 ? librarySidebar.x + librarySidebar.width : 0
+        onCapsuleRequested: window.enterCapsule()
+    }
+
+    LibrarySidebar {
+        id: librarySidebar
+        parent: windowFrame
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: windowFrame.cornerRadius > 0 ? 1 : 0
+        anchors.bottomMargin: windowFrame.cornerRadius
+        width: window.currentView === 0
+            ? (collapsed ? collapsedWidth : expandedWidth) : 0
+        visible: width > 0
+        clip: true
+        z: 2
+        Behavior on width {
+            enabled: window.currentView === 0
+            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+        }
+        theme: appTheme
+        title: window.title
+        session: backend.library
+        onLibraryRequested: backend.library.close_playlist()
+        onPlaylistRequested: (playlistId) => backend.library.open_playlist(playlistId)
+        onSettingsRequested: window.currentView = 1
     }
 
     Item {
         parent: windowFrame.contentItem
         anchors.fill: parent
 
-        LibrarySidebar {
-            id: librarySidebar
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: window.currentView === 0 ? 196 : 0
-            visible: width > 0
-            theme: appTheme
-            session: backend.library
-            onLibraryRequested: backend.library.close_playlist()
-            onPlaylistRequested: (playlistId) => backend.library.open_playlist(playlistId)
-            onSettingsRequested: window.currentView = 1
-        }
-
         Item {
             id: pages
-            anchors.left: librarySidebar.right
+            anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
@@ -301,7 +314,6 @@ ApplicationWindow {
             height: 80
             theme: appTheme
             playerBackend: backend.playback
-            onCapsuleRequested: window.enterCapsule()
             onNowPlayingRequested: {
                 nowPlayingLoader.active = true
                 window.currentView = 2

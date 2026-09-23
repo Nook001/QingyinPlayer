@@ -12,7 +12,6 @@ Item {
 
     signal revealTrackRequested(int trackId)
     signal nowPlayingRequested()
-    signal capsuleRequested()
     property bool queueOpen: false
 
     focus: true
@@ -324,7 +323,7 @@ Item {
 
     FlatButton {
         objectName: "toggleQueue"
-        anchors.right: enterCapsule.left
+        anchors.right: volumeCluster.left
         anchors.rightMargin: 4
         anchors.verticalCenter: parent.verticalCenter
         preferredWidth: 30
@@ -336,23 +335,6 @@ Item {
         ToolTip.visible: hovered
         ToolTip.text: Accessible.name
         onClicked: root.queueOpen = !root.queueOpen
-    }
-
-    FlatButton {
-        id: enterCapsule
-        objectName: "enterCapsule"
-        anchors.right: volumeCluster.left
-        anchors.rightMargin: 4
-        anchors.verticalCenter: parent.verticalCenter
-        preferredWidth: 30
-        preferredHeight: 36
-        theme: root.theme
-        iconName: "capsule"
-        iconSize: 18
-        Accessible.name: "切换胶囊模式"
-        ToolTip.visible: hovered
-        ToolTip.text: Accessible.name
-        onClicked: root.capsuleRequested()
     }
 
     Item {
