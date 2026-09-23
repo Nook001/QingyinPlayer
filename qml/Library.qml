@@ -18,8 +18,14 @@ Item {
     property var viewQueries: ["", "", "", ""]
     property int activeBrowseMode: 0
     property bool restoringSearch: false
-    signal settingsRequested()
     signal trackRevealRequested(int trackId)
+    property bool renamingPlaylist: false
+    property bool playlistPageOpen: session.playlist_open
+    property int openPlaylistId: session.selected_playlist_id
+    property string openPlaylistName: session.selected_playlist_name
+    onPlaylistPageOpenChanged: if (!root.playlistPageOpen) root.renamingPlaylist = false
+    onOpenPlaylistIdChanged: root.renamingPlaylist = false
+    onOpenPlaylistNameChanged: root.renamingPlaylist = false
     signal togglePlaybackRequested()
     property real artistGridY: 0
     property real albumGridY: 0
@@ -49,6 +55,29 @@ Item {
         if (scan !== "" && watch !== "")
             return scan + " · " + watch
         return scan || watch
+    }
+
+    function beginPlaylistRename() {
+        playlistNameField.text = root.session.selected_playlist_name
+        root.renamingPlaylist = true
+        Qt.callLater(() => {
+            playlistNameField.forceActiveFocus()
+            playlistNameField.selectAll()
+        })
+    }
+
+    function commitPlaylistRename() {
+        if (!root.renamingPlaylist)
+            return
+        const name = playlistNameField.text.trim()
+        if (name === "")
+            return
+        root.renamingPlaylist = false
+        root.session.rename_playlist(root.session.selected_playlist_id, name)
+    }
+
+    function cancelPlaylistRename() {
+        root.renamingPlaylist = false
     }
 
     function revealTrack(trackId) {
@@ -181,12 +210,14 @@ Item {
 
                 Icon {
                     Layout.alignment: Qt.AlignVCenter
+                    visible: !root.session.playlist_open
                     name: "library"
                     size: 26
                     color: root.theme.textColor
                 }
 
                 Text {
+                    visible: !root.session.playlist_open
                     text: "曲库"
                     color: root.theme.textColor
                     font.pixelSize: root.theme.titleSize
@@ -194,9 +225,71 @@ Item {
                 }
 
                 Text {
+                    visible: root.session.playlist_open && !root.renamingPlaylist
+                    text: root.session.selected_playlist_name
+                    color: root.theme.textColor
+                    font.pixelSize: root.theme.titleSize
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 420
+                }
+
+                FlatButton {
+                    visible: root.session.playlist_open && !root.renamingPlaylist
+                    theme: root.theme
+                    iconName: "pencil"
+                    iconSize: 16
+                    preferredWidth: 32
+                    preferredHeight: 32
+                    Accessible.name: "重命名歌单"
+                    onClicked: root.beginPlaylistRename()
+                }
+
+                TextField {
+                    id: playlistNameField
+                    visible: root.session.playlist_open && root.renamingPlaylist
+                    Layout.preferredWidth: 280
+                    Layout.maximumWidth: 420
+                    Layout.preferredHeight: 40
+                    color: root.theme.textColor
+                    font.pixelSize: root.theme.titleSize
+                    font.weight: Font.DemiBold
+                    selectByMouse: true
+                    background: Item {}
+                    Keys.onReturnPressed: root.commitPlaylistRename()
+                    Keys.onEscapePressed: root.cancelPlaylistRename()
+                }
+
+                FlatButton {
+                    visible: root.session.playlist_open && root.renamingPlaylist
+                    theme: root.theme
+                    text: "确定"
+                    filled: true
+                    fontPixelSize: root.theme.metaSize
+                    contentAlignment: Text.AlignHCenter
+                    preferredWidth: 64
+                    preferredHeight: 32
+                    Accessible.name: "确定歌单名称"
+                    onClicked: root.commitPlaylistRename()
+                }
+
+                FlatButton {
+                    visible: root.session.playlist_open && root.renamingPlaylist
+                    theme: root.theme
+                    iconName: "close"
+                    iconSize: 14
+                    preferredWidth: 32
+                    preferredHeight: 32
+                    Accessible.name: "取消重命名"
+                    onClicked: root.cancelPlaylistRename()
+                }
+
+                Text {
                     objectName: "libraryTrackCount"
-                    visible: root.session.track_count > 0
-                    text: root.session.track_count + " 首"
+                    visible: root.session.playlist_open || root.session.track_count > 0
+                    text: root.session.playlist_open
+                        ? root.session.selected_playlist_track_count + " 首"
+                        : root.session.track_count + " 首"
                     color: root.theme.mutedTextColor
                     font.pixelSize: root.theme.bodySize
                 }
@@ -220,6 +313,7 @@ Item {
             TextField {
                 id: searchField
                 objectName: "librarySearchField"
+                visible: !root.session.playlist_open
 
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: 168
@@ -294,6 +388,7 @@ Item {
             }
 
             FlatButton {
+                visible: !root.session.playlist_open
                 theme: root.theme
                 text: "添加目录"
                 filled: true
@@ -303,17 +398,6 @@ Item {
                 preferredHeight: 32
                 enabled: !root.session.busy
                 onClicked: folderDialog.open()
-            }
-
-            FlatButton {
-                objectName: "librarySettingsButton"
-                theme: root.theme
-                filled: true
-                preferredWidth: 32
-                preferredHeight: 32
-                iconName: "settings"
-                Accessible.name: "设置"
-                onClicked: root.settingsRequested()
             }
         }
 
@@ -325,11 +409,21 @@ Item {
 
             LibraryViewSwitch {
                 objectName: "libraryViewSwitch"
+                visible: !root.session.playlist_open
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredHeight: 32
                 theme: root.theme
                 currentIndex: root.browseMode
                 onCurrentIndexChanged: root.browseMode = currentIndex
+            }
+
+            FlatButton {
+                visible: root.session.playlist_open
+                theme: root.theme
+                text: "删除歌单"
+                fontPixelSize: root.theme.metaSize
+                preferredHeight: 32
+                onClicked: root.session.delete_playlist(root.session.selected_playlist_id)
             }
         }
 
@@ -344,7 +438,31 @@ Item {
             objectName: "libraryBodyLoader"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            sourceComponent: [allMusicView, artistView, albumView, directoryView][root.browseMode]
+            sourceComponent: root.session.playlist_open
+                ? playlistView
+                : [allMusicView, artistView, albumView, directoryView][root.browseMode]
+        }
+    }
+
+    Component {
+        id: playlistView
+        Item {
+            TrackTable {
+                anchors.fill: parent
+                theme: root.theme
+                trackModel: root.session.playlist_model
+                currentTrackId: root.currentTrackId
+                playbackState: root.playbackState
+                onTogglePlaybackRequested: root.togglePlaybackRequested()
+                sortColumn: String(root.session.playlist_sort_column_name) || "title"
+                sortAscending: root.session.playlist_sort_column_name === ""
+                    ? true : root.session.playlist_sort_ascending
+                membershipAction: "remove"
+                onMembershipRequested: (trackId) =>
+                    root.session.remove_track_from_playlist(trackId)
+                onTrackActivated: (trackId) => root.session.play_playlist_track(trackId)
+                onSortRequested: (column) => root.session.set_playlist_sort(column)
+            }
         }
     }
 
@@ -369,8 +487,18 @@ Item {
                 currentTrackId: root.currentTrackId
                 playbackState: root.playbackState
                 onTogglePlaybackRequested: root.togglePlaybackRequested()
-                sortColumn: String(root.session.sort_column_name)
-                sortAscending: root.session.sort_ascending
+                sortColumn: {
+                    const name = String(root.session.sort_column_name)
+                    return name === "" ? "title" : name
+                }
+                sortAscending: String(root.session.sort_column_name) === ""
+                    ? true : root.session.sort_ascending
+                membershipAction: "add"
+                playlistList: root.session.playlist_list
+                onPlaylistChosen: (playlistId, trackId) =>
+                    root.session.add_track_to_playlist(playlistId, trackId)
+                onPlaylistCreateRequested: (trackId) =>
+                    root.session.create_playlist_with_track(trackId)
                 visible: count > 0 && !root.waitingForSearch
                 onTrackActivated: (trackId) => root.session.play_track(trackId)
                 onSortRequested: (column) => root.session.set_sort(column)
@@ -438,6 +566,12 @@ Item {
             theme: root.theme
             libraryModel: root.session
             embedded: true
+            membershipAction: "add"
+            playlistList: root.session.playlist_list
+            onPlaylistChosen: (playlistId, trackId) =>
+                root.session.add_track_to_playlist(playlistId, trackId)
+            onPlaylistCreateRequested: (trackId) =>
+                root.session.create_playlist_with_track(trackId)
             savedGridY: root.artistGridY
             onSavedGridYChanged: root.artistGridY = savedGridY
         }
@@ -454,6 +588,12 @@ Item {
             theme: root.theme
             libraryModel: root.session
             embedded: true
+            membershipAction: "add"
+            playlistList: root.session.playlist_list
+            onPlaylistChosen: (playlistId, trackId) =>
+                root.session.add_track_to_playlist(playlistId, trackId)
+            onPlaylistCreateRequested: (trackId) =>
+                root.session.create_playlist_with_track(trackId)
             savedGridY: root.albumGridY
             onSavedGridYChanged: root.albumGridY = savedGridY
         }
@@ -484,6 +624,12 @@ Item {
             onCollectionOpened: (id) => root.session.open_directory(id)
             onCollectionClosed: root.session.close_directory()
             onTrackActivated: (id) => root.session.play_directory_track(id)
+            membershipAction: "add"
+            playlistList: root.session.playlist_list
+            onPlaylistChosen: (playlistId, trackId) =>
+                root.session.add_track_to_playlist(playlistId, trackId)
+            onPlaylistCreateRequested: (trackId) =>
+                root.session.create_playlist_with_track(trackId)
         }
     }
 }

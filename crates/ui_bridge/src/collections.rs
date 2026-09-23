@@ -391,6 +391,61 @@ fn snapshot_rows(catalog: &TrackCatalog, rows: &[i64]) -> Vec<TrackSnapshot> {
         .collect()
 }
 
+const PLAYLIST_ID_ROLE: i32 = 0x0300;
+const PLAYLIST_NAME_ROLE: i32 = PLAYLIST_ID_ROLE + 1;
+const PLAYLIST_COUNT_ROLE: i32 = PLAYLIST_ID_ROLE + 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistRow {
+    pub id: i64,
+    pub name: String,
+    pub track_count: i32,
+}
+
+#[allow(missing_debug_implementations)]
+#[derive(QObject, Default)]
+pub struct PlaylistListModel {
+    base: qt_base_class!(trait QAbstractListModel),
+    entries: Vec<PlaylistRow>,
+}
+
+impl PlaylistListModel {
+    pub fn reset(&mut self, entries: Vec<PlaylistRow>) {
+        self.begin_reset_model();
+        self.entries = entries;
+        self.end_reset_model();
+    }
+}
+
+impl QAbstractListModel for PlaylistListModel {
+    fn row_count(&self) -> i32 {
+        i32::try_from(self.entries.len()).unwrap_or(i32::MAX)
+    }
+
+    fn data(&self, index: QModelIndex, role: i32) -> QVariant {
+        let Some(entry) = usize::try_from(index.row())
+            .ok()
+            .and_then(|row| self.entries.get(row))
+        else {
+            return QVariant::default();
+        };
+        match role {
+            PLAYLIST_ID_ROLE => entry.id.into(),
+            PLAYLIST_NAME_ROLE => QString::from(entry.name.as_str()).into(),
+            PLAYLIST_COUNT_ROLE => entry.track_count.into(),
+            _ => QVariant::default(),
+        }
+    }
+
+    fn role_names(&self) -> HashMap<i32, QByteArray> {
+        HashMap::from([
+            (PLAYLIST_ID_ROLE, "playlistId".into()),
+            (PLAYLIST_NAME_ROLE, "name".into()),
+            (PLAYLIST_COUNT_ROLE, "trackCount".into()),
+        ])
+    }
+}
+
 fn sort_row_ids(
     rows: &mut [i64],
     catalog: &HashMap<i64, TrackSnapshot>,

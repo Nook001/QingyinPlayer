@@ -54,6 +54,14 @@ Module {
         Property { name: "search_truncated"; type: "bool"; notify: "search_changed" }
         Property { name: "sort_column_name"; type: "QString"; notify: "sort_changed" }
         Property { name: "sort_ascending"; type: "bool"; notify: "sort_changed" }
+        Property { name: "playlist_list"; type: "PlaylistListModel"; isPointer: true; isReadonly: true }
+        Property { name: "playlist_model"; type: "TrackListModel"; isPointer: true; isReadonly: true }
+        Property { name: "selected_playlist_id"; type: "qlonglong"; notify: "playlist_changed" }
+        Property { name: "selected_playlist_name"; type: "QString"; notify: "playlist_changed" }
+        Property { name: "selected_playlist_track_count"; type: "int"; notify: "playlist_changed" }
+        Property { name: "playlist_open"; type: "bool"; notify: "playlist_changed" }
+        Property { name: "playlist_sort_column_name"; type: "QString"; notify: "playlist_sort_changed" }
+        Property { name: "playlist_sort_ascending"; type: "bool"; notify: "playlist_sort_changed" }
         Property { name: "scanning"; type: "bool"; notify: "scanning_changed" }
         Property { name: "busy"; type: "bool"; notify: "scanning_changed" }
         Property { name: "scan_status"; type: "QString"; notify: "scan_status_changed" }
@@ -62,6 +70,8 @@ Module {
         Signal { name: "collections_changed" }
         Signal { name: "search_changed" }
         Signal { name: "sort_changed" }
+        Signal { name: "playlist_changed" }
+        Signal { name: "playlist_sort_changed" }
         Signal { name: "scanning_changed" }
         Signal { name: "scan_status_changed" }
 
@@ -114,6 +124,42 @@ Module {
             name: "play_directory_track"
             Parameter { name: "track_id"; type: "long" }
         }
+        Method { name: "create_playlist" }
+        Method {
+            name: "rename_playlist"
+            Parameter { name: "playlist_id"; type: "qlonglong" }
+            Parameter { name: "name"; type: "QString" }
+        }
+        Method {
+            name: "delete_playlist"
+            Parameter { name: "playlist_id"; type: "qlonglong" }
+        }
+        Method {
+            name: "open_playlist"
+            Parameter { name: "playlist_id"; type: "qlonglong" }
+        }
+        Method { name: "close_playlist" }
+        Method {
+            name: "add_track_to_playlist"
+            Parameter { name: "playlist_id"; type: "qlonglong" }
+            Parameter { name: "track_id"; type: "qlonglong" }
+        }
+        Method {
+            name: "create_playlist_with_track"
+            Parameter { name: "track_id"; type: "qlonglong" }
+        }
+        Method {
+            name: "remove_track_from_playlist"
+            Parameter { name: "track_id"; type: "qlonglong" }
+        }
+        Method {
+            name: "play_playlist_track"
+            Parameter { name: "track_id"; type: "qlonglong" }
+        }
+        Method {
+            name: "set_playlist_sort"
+            Parameter { name: "column"; type: "QString" }
+        }
     }
 
     Component {
@@ -141,6 +187,8 @@ Module {
         Property { name: "playback_duration"; type: "long"; notify: "playback_duration_changed" }
         Property { name: "player_volume"; type: "double"; notify: "player_volume_changed" }
         Property { name: "play_mode"; type: "QString"; notify: "play_mode_changed" }
+        Property { name: "queue_model"; type: "QueueModel"; isPointer: true; isReadonly: true }
+        Property { name: "current_queue_index"; type: "int"; notify: "playback_changed" }
 
         Signal { name: "playback_changed" }
         Signal { name: "playback_position_changed" }
@@ -164,6 +212,19 @@ Module {
         Method {
             name: "set_ui_visible"
             Parameter { name: "visible"; type: "bool" }
+        }
+        Method {
+            name: "play_queue_row"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "remove_queue_row"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "move_queue_row"
+            Parameter { name: "from"; type: "int" }
+            Parameter { name: "to"; type: "int" }
         }
     }
 

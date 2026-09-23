@@ -18,13 +18,15 @@ use qingyin_library::{
     watch_directories,
 };
 use qingyin_metadata::TrackMetadata;
-use qingyin_storage::{Database, SearchHits, StorageError};
+use qingyin_storage::{Database, PlaylistSummary, SearchHits, StorageError};
 use qmetaobject::QUrl;
 use qmetaobject::prelude::*;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::collections::{CollectionModel, DetailTrackModel, TrackCatalog, TrackListModel};
+use crate::collections::{
+    CollectionModel, DetailTrackModel, PlaylistListModel, PlaylistRow, TrackCatalog, TrackListModel,
+};
 
 const SEARCH_RESULT_LIMIT: usize = 500;
 const WORKER_JOIN: Duration = Duration::from_millis(100);
@@ -171,6 +173,17 @@ pub struct LibrarySession {
     artist_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
     album_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
     directory_detail: qt_property!(RefCell<DetailTrackModel>; CONST),
+    playlist_list: qt_property!(RefCell<PlaylistListModel>; CONST),
+    playlist_model: qt_property!(RefCell<TrackListModel>; CONST),
+    selected_playlist_id: qt_property!(i64; NOTIFY playlist_changed),
+    selected_playlist_name: qt_property!(QString; NOTIFY playlist_changed),
+    selected_playlist_track_count: qt_property!(i32; NOTIFY playlist_changed),
+    playlist_open: qt_property!(bool; NOTIFY playlist_changed),
+    playlist_changed: qt_signal!(),
+    playlist_sort_column: SortColumn,
+    playlist_sort_column_name: qt_property!(QString; NOTIFY playlist_sort_changed),
+    playlist_sort_ascending: qt_property!(bool; NOTIFY playlist_sort_changed),
+    playlist_sort_changed: qt_signal!(),
     selected_artist: qt_property!(QString; NOTIFY collections_changed),
     selected_artist_subtitle: qt_property!(QString; NOTIFY collections_changed),
     selected_artist_cover: qt_property!(QString; NOTIFY collections_changed),
@@ -316,6 +329,58 @@ pub struct LibrarySession {
         fn play_directory_track(&mut self, track_id: i64) {
             let tracks = self.directory_detail.borrow().snapshot();
             self.play_listed_id(&tracks, track_id);
+        }
+    ),
+    create_playlist: qt_method!(
+        fn create_playlist(&mut self) -> i64 {
+            self.create_playlist_internal()
+        }
+    ),
+    rename_playlist: qt_method!(
+        fn rename_playlist(&mut self, playlist_id: i64, name: QString) {
+            self.rename_playlist_internal(playlist_id, &name.to_string());
+        }
+    ),
+    delete_playlist: qt_method!(
+        fn delete_playlist(&mut self, playlist_id: i64) {
+            self.delete_playlist_internal(playlist_id);
+        }
+    ),
+    open_playlist: qt_method!(
+        fn open_playlist(&mut self, playlist_id: i64) {
+            self.open_playlist_internal(playlist_id);
+        }
+    ),
+    close_playlist: qt_method!(
+        fn close_playlist(&mut self) {
+            self.playlist_open = false;
+            self.playlist_changed();
+        }
+    ),
+    add_track_to_playlist: qt_method!(
+        fn add_track_to_playlist(&mut self, playlist_id: i64, track_id: i64) {
+            self.add_track_to_playlist_internal(playlist_id, track_id);
+        }
+    ),
+    create_playlist_with_track: qt_method!(
+        fn create_playlist_with_track(&mut self, track_id: i64) -> i64 {
+            self.create_playlist_with_track_internal(track_id)
+        }
+    ),
+    remove_track_from_playlist: qt_method!(
+        fn remove_track_from_playlist(&mut self, track_id: i64) {
+            self.remove_track_from_playlist_internal(track_id);
+        }
+    ),
+    play_playlist_track: qt_method!(
+        fn play_playlist_track(&mut self, track_id: i64) {
+            let tracks = self.playlist_model.borrow().snapshot();
+            self.play_listed_id(&tracks, track_id);
+        }
+    ),
+    set_playlist_sort: qt_method!(
+        fn set_playlist_sort(&mut self, column: QString) {
+            self.set_playlist_sort_internal(&column.to_string());
         }
     ),
 }
@@ -547,6 +612,7 @@ impl LibrarySession {
         self.scan_status = snapshot.status.into();
         self.scan_status_changed();
         self.queue_missing_covers();
+        self.reload_playlists();
     }
 
     fn apply_search_snapshot(&mut self, result: Result<SearchSnapshot, LibraryIoError>) {
@@ -665,6 +731,7 @@ impl LibrarySession {
             self.apply_collections(artists, albums, directories);
             self.library_revision = self.library_revision.wrapping_add(1);
             self.queue_missing_covers();
+            self.reload_playlists();
         } else {
             self.apply_library_snapshot(LibrarySnapshot {
                 tracks,
@@ -895,6 +962,203 @@ impl LibrarySession {
         true
     }
 
+    fn with_playlist_database<T>(
+        &self,
+        operation: impl FnOnce(&mut Database) -> Result<T, StorageError>,
+    ) -> Result<T, LibraryIoError> {
+        let mut database =
+            Database::open_migrated(database_path()?).map_err(LibraryIoError::OpenDatabase)?;
+        operation(&mut database).map_err(LibraryIoError::OpenDatabase)
+    }
+
+    fn reload_playlists(&mut self) {
+        let listed = self
+            .with_playlist_database(|database| database.list_playlists())
+            .unwrap_or_default();
+        if self.selected_playlist_id > 0
+            && !listed
+                .iter()
+                .any(|playlist| playlist.id == self.selected_playlist_id)
+        {
+            self.selected_playlist_id = 0;
+            self.selected_playlist_name = QString::default();
+            self.selected_playlist_track_count = 0;
+            self.playlist_open = false;
+            self.playlist_model.borrow_mut().set_rows(Vec::new());
+        }
+        self.playlist_list.borrow_mut().reset(
+            listed
+                .into_iter()
+                .map(|playlist| PlaylistRow {
+                    id: playlist.id,
+                    name: playlist.name,
+                    track_count: playlist.track_count,
+                })
+                .collect(),
+        );
+        if self.playlist_open {
+            self.refresh_open_playlist_tracks();
+        }
+        self.playlist_changed();
+    }
+
+    fn insert_playlist(&mut self) -> Result<i64, LibraryIoError> {
+        self.with_playlist_database(|database| {
+            let existing = database.list_playlists()?;
+            let name = unique_playlist_name(&existing, "我的歌单");
+            database.create_playlist(&name)
+        })
+    }
+
+    fn create_playlist_internal(&mut self) -> i64 {
+        let Ok(id) = self.insert_playlist() else {
+            return 0;
+        };
+        self.reload_playlists();
+        self.open_playlist_internal(id);
+        id
+    }
+
+    fn create_playlist_with_track_internal(&mut self, track_id: i64) -> i64 {
+        let Ok(id) = self.insert_playlist() else {
+            return 0;
+        };
+        if track_id > 0 {
+            let _ = self
+                .with_playlist_database(|database| database.add_playlist_track(id, track_id));
+        }
+        self.reload_playlists();
+        id
+    }
+
+    fn rename_playlist_internal(&mut self, playlist_id: i64, name: &str) {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if self
+            .with_playlist_database(|database| database.rename_playlist(playlist_id, trimmed))
+            .is_err()
+        {
+            return;
+        }
+        if self.selected_playlist_id == playlist_id {
+            self.selected_playlist_name = trimmed.into();
+        }
+        self.reload_playlists();
+    }
+
+    fn delete_playlist_internal(&mut self, playlist_id: i64) {
+        if self
+            .with_playlist_database(|database| database.delete_playlist(playlist_id))
+            .is_err()
+        {
+            return;
+        }
+        if self.selected_playlist_id == playlist_id {
+            self.selected_playlist_id = 0;
+            self.selected_playlist_name = QString::default();
+            self.selected_playlist_track_count = 0;
+            self.playlist_open = false;
+            self.playlist_model.borrow_mut().set_rows(Vec::new());
+        }
+        self.reload_playlists();
+    }
+
+    fn open_playlist_internal(&mut self, playlist_id: i64) {
+        let name = self
+            .with_playlist_database(|database| database.list_playlists())
+            .ok()
+            .and_then(|lists| {
+                lists
+                    .into_iter()
+                    .find(|playlist| playlist.id == playlist_id)
+                    .map(|playlist| playlist.name)
+            });
+        let Some(name) = name else {
+            return;
+        };
+        self.selected_playlist_id = playlist_id;
+        self.selected_playlist_name = name.into();
+        self.playlist_open = true;
+        self.playlist_sort_column = SortColumn::Title;
+        self.playlist_sort_ascending = true;
+        self.playlist_sort_column_name = "title".into();
+        self.playlist_sort_changed();
+        self.refresh_open_playlist_tracks();
+        self.playlist_changed();
+    }
+
+    fn refresh_open_playlist_tracks(&mut self) {
+        if self.selected_playlist_id <= 0 {
+            self.selected_playlist_track_count = 0;
+            return;
+        }
+        let ids = self
+            .with_playlist_database(|database| {
+                database.playlist_track_ids(self.selected_playlist_id)
+            })
+            .unwrap_or_default();
+        self.ensure_catalog_bound();
+        let rows = {
+            let catalog = self.catalog.borrow();
+            ids.into_iter()
+                .filter(|id| catalog.contains_key(id))
+                .collect::<Vec<_>>()
+        };
+        self.selected_playlist_track_count = i32::try_from(rows.len()).unwrap_or(i32::MAX);
+        self.playlist_model.borrow_mut().set_rows(rows);
+        self.playlist_model
+            .borrow_mut()
+            .sort_in_place(self.playlist_sort_column, self.playlist_sort_ascending);
+    }
+
+    fn add_track_to_playlist_internal(&mut self, playlist_id: i64, track_id: i64) {
+        if playlist_id <= 0 || track_id <= 0 {
+            return;
+        }
+        if self
+            .with_playlist_database(|database| database.add_playlist_track(playlist_id, track_id))
+            .is_err()
+        {
+            return;
+        }
+        self.reload_playlists();
+    }
+
+    fn remove_track_from_playlist_internal(&mut self, track_id: i64) {
+        let playlist_id = self.selected_playlist_id;
+        if playlist_id <= 0 {
+            return;
+        }
+        if self
+            .with_playlist_database(|database| {
+                database.remove_playlist_track(playlist_id, track_id)
+            })
+            .is_err()
+        {
+            return;
+        }
+        self.reload_playlists();
+    }
+
+    fn set_playlist_sort_internal(&mut self, column: &str) {
+        let Some(column) = SortColumn::from_name(column) else {
+            return;
+        };
+        if self.playlist_sort_column == column {
+            self.playlist_sort_ascending = !self.playlist_sort_ascending;
+        } else {
+            self.playlist_sort_column = column;
+            self.playlist_sort_ascending = true;
+        }
+        self.playlist_sort_column_name = column.as_str().into();
+        self.playlist_sort_changed();
+        self.playlist_model
+            .borrow_mut()
+            .sort_in_place(self.playlist_sort_column, self.playlist_sort_ascending);
+    }
+
     fn ensure_catalog_bound(&mut self) {
         if self.catalog_bound {
             return;
@@ -910,6 +1174,9 @@ impl LibrarySession {
             .borrow_mut()
             .bind_catalog(Rc::clone(&catalog));
         self.directory_detail
+            .borrow_mut()
+            .bind_catalog(Rc::clone(&catalog));
+        self.playlist_model
             .borrow_mut()
             .bind_catalog(Rc::clone(&catalog));
         self.catalog_bound = true;
@@ -1290,6 +1557,19 @@ fn watch_status(summary: &WatchSummary) -> String {
         let _ = write!(status, "，正在合并对账");
     }
     status
+}
+
+fn unique_playlist_name(existing: &[PlaylistSummary], base: &str) -> String {
+    if !existing.iter().any(|playlist| playlist.name == base) {
+        return base.to_string();
+    }
+    for index in 2..1000 {
+        let name = format!("{base} {index}");
+        if !existing.iter().any(|playlist| playlist.name == name) {
+            return name;
+        }
+    }
+    format!("{base} {}", existing.len() + 1)
 }
 
 fn sort_ids_with(

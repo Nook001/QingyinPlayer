@@ -164,9 +164,26 @@ ApplicationWindow {
         parent: windowFrame.contentItem
         anchors.fill: parent
 
+        LibrarySidebar {
+            id: librarySidebar
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: window.currentView === 0 ? 196 : 0
+            visible: width > 0
+            theme: appTheme
+            session: backend.library
+            onLibraryRequested: backend.library.close_playlist()
+            onPlaylistRequested: (playlistId) => backend.library.open_playlist(playlistId)
+            onSettingsRequested: window.currentView = 1
+        }
+
         Item {
             id: pages
-            anchors.fill: parent
+            anchors.left: librarySidebar.right
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
 
             Loader {
                 id: pageLoader
@@ -310,7 +327,6 @@ ApplicationWindow {
             playbackState: backend.playback.playback_state
             viewQueries: window.libraryQueries
             onViewQueriesChanged: window.libraryQueries = viewQueries
-            onSettingsRequested: window.currentView = 1
             onTogglePlaybackRequested: backend.playback.toggle_playback()
             pendingQuery: window.libraryQuery
             savedContentY: window.libraryContentY

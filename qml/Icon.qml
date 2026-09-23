@@ -67,6 +67,12 @@ Item {
             return "M5 5h14v14H5z"
         case "windowRestore":
             return "M8 5h11v11M5 8h11v11H5z"
+        case "plus":
+            return "M12 5v14M5 12h14"
+        case "pencil":
+            return "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"
+        case "check":
+            return "M20 6L9 17l-5-5"
         case "list":
             return "M8 6h13M8 12h13M8 18h13M4 6h.01M4 12h.01M4 18h.01"
         case "capsule":

@@ -12,7 +12,7 @@ pub type TrackId = i64;
 const SEARCH_FIELD_TITLE: &str = "title";
 const SEARCH_FIELD_ARTIST: &str = "artist";
 const SEARCH_FIELD_ALBUM: &str = "album";
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 const BUSY_TIMEOUT_MS: u32 = 5000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,14 @@ pub struct TrackRef {
     pub id: TrackId,
     pub path: PathBuf,
     pub fingerprint: FileFingerprint,
+}
+
+/// A named set of tracks. Membership has no playback order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistSummary {
+    pub id: i64,
+    pub name: String,
+    pub track_count: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +157,114 @@ impl Database {
     /// # Errors
     ///
     /// Returns [`StorageError`] when SQLite cannot execute or decode the query.
+    /// Creates a playlist and returns its id. The name is stored as given.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot insert the row.
+    pub fn create_playlist(&mut self, name: &str) -> Result<i64, StorageError> {
+        self.connection
+            .prepare_cached("INSERT INTO playlists (name) VALUES (?1)")?
+            .execute(params![name])?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Renames a playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot update the row.
+    pub fn rename_playlist(&mut self, id: i64, name: &str) -> Result<(), StorageError> {
+        self.connection
+            .prepare_cached("UPDATE playlists SET name = ?1 WHERE id = ?2")?
+            .execute(params![name, id])?;
+        Ok(())
+    }
+
+    /// Deletes a playlist and its membership rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot delete the row.
+    pub fn delete_playlist(&mut self, id: i64) -> Result<(), StorageError> {
+        self.connection
+            .prepare_cached("DELETE FROM playlists WHERE id = ?1")?
+            .execute(params![id])?;
+        Ok(())
+    }
+
+    /// Lists playlists by name. Track count is membership, not a play order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot read the rows.
+    pub fn list_playlists(&self) -> Result<Vec<PlaylistSummary>, StorageError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT playlists.id, playlists.name, COUNT(playlist_tracks.track_id)
+             FROM playlists
+             LEFT JOIN playlist_tracks ON playlist_tracks.playlist_id = playlists.id
+             GROUP BY playlists.id
+             ORDER BY playlists.name, playlists.id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(PlaylistSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                track_count: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+
+    /// Returns member track ids. The order is not a playback order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot read the rows.
+    pub fn playlist_track_ids(&self, playlist_id: i64) -> Result<Vec<TrackId>, StorageError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY track_id",
+        )?;
+        let rows = statement.query_map(params![playlist_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+
+    /// Adds a track to a playlist. A second insert of the same track is ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot write the membership.
+    pub fn add_playlist_track(
+        &mut self,
+        playlist_id: i64,
+        track_id: TrackId,
+    ) -> Result<(), StorageError> {
+        self.connection
+            .prepare_cached(
+                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id) VALUES (?1, ?2)",
+            )?
+            .execute(params![playlist_id, track_id])?;
+        Ok(())
+    }
+
+    /// Removes one track from a playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when SQLite cannot delete the membership.
+    pub fn remove_playlist_track(
+        &mut self,
+        playlist_id: i64,
+        track_id: TrackId,
+    ) -> Result<(), StorageError> {
+        self.connection
+            .prepare_cached("DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2")?
+            .execute(params![playlist_id, track_id])?;
+        Ok(())
+    }
+
     pub fn list_tracks(&self) -> Result<Vec<StoredTrack>, StorageError> {
         let mut statement = self.connection.prepare_cached(
             "SELECT tracks.id, tracks.path, tracks.title, tracks.album, tracks.album_artist,
@@ -478,6 +594,20 @@ impl Database {
             }
             set_user_version(&transaction, 6)?;
         }
+        if version < 7 {
+            transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS playlists (
+                     id INTEGER PRIMARY KEY,
+                     name TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS playlist_tracks (
+                     playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+                     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                     PRIMARY KEY (playlist_id, track_id)
+                 );",
+            )?;
+            set_user_version(&transaction, 7)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -521,6 +651,15 @@ const LATEST_SCHEMA: &str = "
         full_pinyin TEXT NOT NULL,
         initials TEXT NOT NULL,
         PRIMARY KEY (track_id, field, position)
+    );
+    CREATE TABLE IF NOT EXISTS playlists (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS playlist_tracks (
+        playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        PRIMARY KEY (playlist_id, track_id)
     );
     CREATE INDEX IF NOT EXISTS idx_search_terms_field_normalized
         ON search_terms(field, normalized);
@@ -977,6 +1116,31 @@ mod tests {
         assert_eq!(stored[0].metadata.modified_at_ns, 0);
         assert_eq!(stored[0].metadata.audio, AudioProperties::default());
         assert_eq!(user_version(&db.connection).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn playlist_membership_is_a_set_without_play_order() {
+        let mut database = Database::open_in_memory().unwrap();
+        let first = TrackMetadata::from_display("/music/b.flac", "B", None, vec![], None);
+        let second = TrackMetadata::from_display("/music/a.flac", "A", None, vec![], None);
+        let first_id = database.upsert_track(&first).unwrap();
+        let second_id = database.upsert_track(&second).unwrap();
+        let playlist_id = database.create_playlist("夜").unwrap();
+        database.add_playlist_track(playlist_id, first_id).unwrap();
+        database.add_playlist_track(playlist_id, first_id).unwrap();
+        database.add_playlist_track(playlist_id, second_id).unwrap();
+        let mut members = database.playlist_track_ids(playlist_id).unwrap();
+        members.sort_unstable();
+        let mut expected = vec![first_id, second_id];
+        expected.sort_unstable();
+        assert_eq!(members, expected);
+        let listed = database.list_playlists().unwrap();
+        assert_eq!(listed[0].track_count, 2);
+        database.remove_track(Path::new("/music/b.flac")).unwrap();
+        assert_eq!(
+            database.playlist_track_ids(playlist_id).unwrap(),
+            vec![second_id]
+        );
     }
 
     #[test]

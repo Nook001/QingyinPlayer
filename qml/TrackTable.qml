@@ -29,6 +29,28 @@ Item {
 
     signal trackActivated(int trackId)
     signal sortRequested(string column)
+    property string membershipAction: ""
+    property var playlistList: null
+    signal membershipRequested(int trackId)
+    signal playlistChosen(int playlistId, int trackId)
+    signal playlistCreateRequested(int trackId)
+
+    function openPlaylistPicker(trackId, anchor) {
+        playlistPicker.trackId = trackId
+        const overlay = Overlay.overlay
+        if (!overlay)
+            return
+        const point = anchor.mapToItem(overlay, 0, anchor.height + 4)
+        const popupWidth = playlistPicker.width
+        const popupHeight = Math.min(320, Math.max(96, playlistPicker.implicitHeight))
+        let x = point.x + anchor.width - popupWidth
+        let y = point.y
+        if (y + popupHeight > overlay.height - 8)
+            y = Math.max(8, point.y - popupHeight - anchor.height - 8)
+        playlistPicker.x = Math.max(8, Math.min(x, overlay.width - popupWidth - 8))
+        playlistPicker.y = Math.max(8, y)
+        playlistPicker.open()
+    }
 
     function heading(label, column) {
         if (!root.sortable || root.sortColumn !== column)
@@ -399,6 +421,25 @@ Item {
                             font.pixelSize: root.theme.digitSize
                             font.family: root.theme.digitFamily
                         }
+
+                        FlatButton {
+                            id: membershipButton
+                            visible: root.membershipAction !== "" && trackRow.hovered
+                            theme: root.theme
+                            iconName: root.membershipAction === "remove" ? "close" : "plus"
+                            iconSize: 14
+                            preferredWidth: 28
+                            preferredHeight: 28
+                            Accessible.name: root.membershipAction === "remove" ? "从歌单移除" : "加入歌单"
+                            onClicked: {
+                                const id = trackRow.trackId
+                                if (root.membershipAction === "add") {
+                                    root.openPlaylistPicker(id, membershipButton)
+                                    return
+                                }
+                                Qt.callLater(() => root.membershipRequested(id))
+                            }
+                        }
                     }
 
                     onClicked: root.selectTrack(trackRow.index, trackRow.trackId)
@@ -415,6 +456,112 @@ Item {
                 anchors.bottom: trackList.bottom
                 theme: root.theme
                 scroller: trackList
+            }
+        }
+    }
+
+    Popup {
+        id: playlistPicker
+        objectName: "playlistPicker"
+        property int trackId: 0
+        parent: Overlay.overlay
+        width: 232
+        padding: 10
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: RoundedRect {
+            color: root.theme.surfaceColor
+            radius: 12
+            borderWidth: 1
+            borderColor: root.theme.dividerColor
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 2
+
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.bottomMargin: 4
+                text: "加入歌单"
+                color: root.theme.mutedTextColor
+                font.pixelSize: root.theme.metaSize
+            }
+
+            ListView {
+                id: playlistChoices
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(220, contentHeight)
+                visible: count > 0
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: root.playlistList
+                spacing: 2
+
+                delegate: Item {
+                    id: playlistChoice
+                    required property int playlistId
+                    required property string name
+                    required property int trackCount
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 34
+
+                    RoundedRect {
+                        anchors.fill: parent
+                        radius: 8
+                        color: choiceHover.hovered ? root.theme.hoverColor : "transparent"
+                    }
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        text: playlistChoice.name
+                        color: root.theme.textColor
+                        elide: Text.ElideRight
+                        font.pixelSize: root.theme.bodySize
+                    }
+
+                    HoverHandler { id: choiceHover }
+
+                    TapHandler {
+                        onTapped: {
+                            const playlistId = playlistChoice.playlistId
+                            const trackId = playlistPicker.trackId
+                            playlistPicker.close()
+                            root.playlistChosen(playlistId, trackId)
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.topMargin: 4
+                Layout.bottomMargin: 4
+                visible: playlistChoices.count === 0
+                text: "还没有歌单"
+                color: root.theme.mutedTextColor
+                font.pixelSize: root.theme.metaSize
+            }
+
+            FlatButton {
+                Layout.fillWidth: true
+                theme: root.theme
+                text: "新建歌单"
+                fontPixelSize: root.theme.metaSize
+                preferredHeight: 32
+                Accessible.name: "新建歌单并加入"
+                onClicked: {
+                    const trackId = playlistPicker.trackId
+                    playlistPicker.close()
+                    root.playlistCreateRequested(trackId)
+                }
             }
         }
     }

@@ -20,6 +20,8 @@ Rectangle {
         function track_id_at(row) { return row >= 0 && row < count ? get(row).trackId : 0 }
 
     }
+    ListModel { id: playlistNames }
+
     ListModel {
         id: collections
         ListElement { name: "现场"; subtitle: "2 首歌曲 · /music/现场"; cover: ""; collectionId: "directory:/music/现场" }
@@ -56,6 +58,11 @@ Rectangle {
         property bool busy: false
         property bool scanning: false
         property int track_count: 100
+        property bool playlist_open: false
+        property int selected_playlist_id: 0
+        property string selected_playlist_name: ""
+        property int selected_playlist_track_count: 0
+        property var playlist_list: playlistNames
         property string scan_status: ""
         property string watch_status: ""
         property string openedDirectory: ""

@@ -11,7 +11,7 @@
 | 桥接 | `qmetaobject` | `AppBridge`、`LibrarySession`、列表模型、`PlaybackController` |
 | 播放 | GStreamer `playbin` | 命令在独立 GLib 线程执行，输出到 PipeWire |
 | 元数据 | Lofty | 标签、封面、歌词 |
-| 曲库 | SQLite（`rusqlite`，bundled） | schema 6，WAL |
+| 曲库 | SQLite（`rusqlite`，bundled） | schema 7，WAL |
 | 中文 | `pinyin` 搜索键，ICU4X 排序 | `library` 与 `storage` 使用 |
 | 监听 | `notify` | 有界邮箱，安静窗口后增量刷新 |
 | 设置 | XDG 下的 TOML | 原子替换写入 |

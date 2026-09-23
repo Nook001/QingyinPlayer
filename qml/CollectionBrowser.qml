@@ -35,6 +35,10 @@ Item {
     signal collectionOpened(string collectionId)
     signal collectionClosed()
     signal trackActivated(int trackId)
+    property string membershipAction: ""
+    property var playlistList: null
+    signal playlistChosen(int playlistId, int trackId)
+    signal playlistCreateRequested(int trackId)
 
     readonly property bool showingDetail: root.selectedName !== ""
 
@@ -324,6 +328,10 @@ Item {
             playbackState: root.playbackState
             onTogglePlaybackRequested: root.togglePlaybackRequested()
             sortable: false
+            membershipAction: root.membershipAction
+            playlistList: root.playlistList
+            onPlaylistChosen: (playlistId, trackId) => root.playlistChosen(playlistId, trackId)
+            onPlaylistCreateRequested: (trackId) => root.playlistCreateRequested(trackId)
             onTrackActivated: (trackId) => root.trackActivated(trackId)
         }
     }
