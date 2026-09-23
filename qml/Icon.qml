@@ -55,6 +55,10 @@ Item {
             return "M6 15l6-6 6 6"
         case "chevronDown":
             return "M6 9l6 6 6-6"
+        case "sidebar":
+            return "M8 4.5h8.5a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-7a4 4 0 0 1 4-4zM9.5 4.5v15"
+        case "sidebarCompact":
+            return "M8 4.5h8.5a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-7a4 4 0 0 1 4-4zM7.2 4.5v15"
         case "repeat":
             return "M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"
         case "shuffle":

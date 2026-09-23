@@ -169,7 +169,7 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.leftMargin: windowFrame.cornerRadius > 0 ? 1 : 0
-        anchors.bottomMargin: windowFrame.cornerRadius
+        anchors.bottomMargin: windowFrame.cornerRadius > 0 ? 1 : 0
         width: window.currentView === 0
             ? (collapsed ? collapsedWidth : expandedWidth) : 0
         visible: width > 0

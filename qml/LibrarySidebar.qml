@@ -16,7 +16,7 @@ Item {
     signal settingsRequested()
 
     readonly property int expandedWidth: 196
-    readonly property int collapsedWidth: 88
+    readonly property int collapsedWidth: 80
     property bool collapsed: false
     property int renamingPlaylistId: 0
 
@@ -52,28 +52,49 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            Layout.leftMargin: root.collapsed ? 8 : 16
-            Layout.rightMargin: 8
-            spacing: 4
+            Layout.preferredHeight: 48
+            Layout.leftMargin: root.collapsed ? 0 : 16
+            Layout.rightMargin: root.collapsed ? 0 : 8
+            spacing: root.collapsed ? 0 : 4
+
+            Item {
+                Layout.fillWidth: true
+                visible: root.collapsed
+            }
 
             Text {
+                visible: !root.collapsed
                 Layout.fillWidth: true
                 text: root.title
-                color: root.theme.mutedTextColor
-                font.pixelSize: root.theme.metaSize
+                color: root.theme.textColor
+                font.pixelSize: 18
+                font.weight: Font.Medium
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
 
             FlatButton {
+                id: sidebarToggle
                 theme: root.theme
-                iconName: root.collapsed ? "chevronRight" : "chevronLeft"
-                iconSize: 16
+                iconName: root.collapsed ? "sidebarCompact" : "sidebar"
+                iconSize: 18
                 preferredWidth: 28
                 preferredHeight: 28
+                labelColor: sidebarToggle.hovered ? root.theme.textColor : root.theme.mutedTextColor
                 Accessible.name: root.collapsed ? "展开侧边栏" : "折叠侧边栏"
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: Accessible.name
                 onClicked: root.collapsed = !root.collapsed
+
+                HoverHandler {
+                    cursorShape: Qt.PointingHandCursor
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                visible: root.collapsed
             }
         }
 
@@ -272,8 +293,8 @@ Item {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: row.compact ? 6 : 8
-            anchors.rightMargin: 4
+            anchors.leftMargin: row.compact ? 4 : 8
+            anchors.rightMargin: row.compact ? 4 : 4
             spacing: 8
             visible: !row.iconOnly
 
@@ -295,6 +316,7 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     text: row.label
                     color: row.theme.textColor
+                    horizontalAlignment: row.compact ? Text.AlignHCenter : Text.AlignLeft
                     elide: Text.ElideRight
                     font.pixelSize: row.theme.bodySize
                     font.weight: row.selected ? Font.DemiBold : Font.Normal

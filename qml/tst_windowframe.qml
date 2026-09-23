@@ -73,7 +73,7 @@ Item {
         function test_geometry_for_window_states() {
             compare(frame.cornerRadius, 16)
             compare(frame.contentItem.y, 36)
-            compare(frame.contentItem.height, root.height - 52)
+            compare(frame.contentItem.height, root.height - 37)
             windowMock.showMaximized()
             compare(frame.cornerRadius, 0)
             compare(frame.contentItem.height, root.height - 36)

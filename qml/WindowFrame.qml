@@ -37,13 +37,13 @@ Item {
         borderColor: root.theme.dividerColor
     }
 
-    // Content stays inside the straight edges of the frame. This avoids a full-window mask texture.
+    // A 1px inset clears the frame stroke. The page background matches the window, so the rounded corners stay clear without a full-width bottom gap.
     Item {
         id: body
         objectName: "windowBody"
         anchors.fill: parent
         anchors.topMargin: root.titleBarHeight
-        anchors.bottomMargin: root.cornerRadius
+        anchors.bottomMargin: root.cornerRadius > 0 ? 1 : 0
         anchors.leftMargin: (root.cornerRadius > 0 ? 1 : 0) + root.leadingWidth
         anchors.rightMargin: root.cornerRadius > 0 ? 1 : 0
         clip: true
