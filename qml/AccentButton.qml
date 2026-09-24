@@ -19,6 +19,11 @@ Button {
     flat: true
     hoverEnabled: true
 
+    scale: root.enabled && root.down ? 0.95 : 1.0
+    Behavior on scale {
+        NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
+    }
+
     contentItem: Item {
         Row {
             anchors.centerIn: parent
@@ -49,5 +54,9 @@ Button {
         color: !root.enabled
             ? root.theme.subtleColor
             : (root.down ? root.theme.accentPressedColor : root.theme.accentColor)
+
+        Behavior on color {
+            ColorAnimation { duration: 130; easing.type: Easing.OutCubic }
+        }
     }
 }

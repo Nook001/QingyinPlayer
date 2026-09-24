@@ -275,6 +275,10 @@ Item {
             radius: 8
             color: row.selected ? row.theme.subtleColor
                 : (rowHover.hovered ? row.theme.hoverColor : "transparent")
+
+            Behavior on color {
+                ColorAnimation { duration: 130; easing.type: Easing.OutCubic }
+            }
         }
 
         Icon {

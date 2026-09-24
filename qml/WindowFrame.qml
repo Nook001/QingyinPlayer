@@ -29,12 +29,23 @@ Item {
         else windowHandle.showMaximized()
     }
 
-    RoundedRect {
+    ShaderEffect {
+        id: ambientBackground
         anchors.fill: parent
-        radius: root.cornerRadius
-        color: root.theme.backgroundColor
-        borderWidth: root.cornerRadius > 0 ? 1 : 0
-        borderColor: root.theme.dividerColor
+        property real radius: root.cornerRadius
+        property real windowWidth: width
+        property real windowHeight: height
+        property color baseTop: root.theme.backgroundTop
+        property color baseBottom: root.theme.backgroundBottom
+        property color light1Color: root.theme.light1Color
+        property real light1Strength: root.theme.light1Strength
+        property color light2Color: root.theme.light2Color
+        property real light2Strength: root.theme.light2Strength
+        property color borderColor: root.theme.dividerColor
+        property real borderWidth: root.cornerRadius > 0 ? 1.0 : 0.0
+        property real grainStrength: root.theme.grainStrength
+        vertexShader: Qt.resolvedUrl("shaders/ambient_mesh.vert.qsb")
+        fragmentShader: Qt.resolvedUrl("shaders/ambient_mesh.frag.qsb")
     }
 
     // A 1px inset clears the frame stroke. The page background matches the window, so the rounded corners stay clear without a full-width bottom gap.
@@ -144,10 +155,22 @@ Item {
                     }
                     background: Rectangle {
                         radius: 6
-                        color: action.hovered || action.down
-                            ? (action.modelData === "close" ? root.theme.closeColor : root.theme.hoverColor) : "transparent"
+                        color: {
+                            if (action.modelData === "close")
+                                return (action.hovered || action.down) ? root.theme.closeColor : "transparent"
+                            const pressedCol = root.theme.pressedColor || root.theme.subtleColor || root.theme.hoverColor
+                            if (action.down)
+                                return pressedCol
+                            if (action.hovered)
+                                return root.theme.hoverColor
+                            return "transparent"
+                        }
                         border.width: action.visualFocus ? 1 : 0
                         border.color: root.theme.accentColor
+
+                        Behavior on color {
+                            ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                        }
                     }
                 }
             }

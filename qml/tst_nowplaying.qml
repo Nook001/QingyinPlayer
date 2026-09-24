@@ -8,7 +8,7 @@ Item {
     id: root
     width: 1180
     height: 760
-    Theme { id: theme; darkTheme: false }
+    Theme { id: theme }
     Rectangle { anchors.fill: parent; color: theme.backgroundColor }
     QtObject {
         id: player
@@ -38,7 +38,7 @@ Item {
         when: windowShown
         function init() {
             root.width = 1180
-            theme.darkTheme = false
+            theme.colorTheme = "qingci"
             player.playback_position = 0
             player.requestedSeek = -1
             player.lyrics_synchronized = true
@@ -160,7 +160,7 @@ Item {
         }
         function test_narrow_dark() {
             root.width = 640
-            theme.darkTheme = true
+            theme.colorTheme = "songyan"
             player.playback_position = 5100
             waitForRendering(loader.item)
             const list = findChild(loader.item, "lyricsList")

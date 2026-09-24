@@ -93,6 +93,12 @@ Item {
         easing.type: Easing.OutCubic
     }
 
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        hoverEnabled: true
+    }
+
     Item {
         id: backdrop
         anchors.fill: parent

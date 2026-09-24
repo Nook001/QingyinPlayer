@@ -15,6 +15,7 @@ Item {
         readonly property color textColor: "#111"
         readonly property color mutedTextColor: "#666"
         readonly property color hoverColor: "#eee"
+        readonly property color pressedColor: "#ccc"
         readonly property color accentColor: "#24745F"
         readonly property color accentPressedColor: "#1B5E4D"
         readonly property color dividerColor: "#ddd"

@@ -92,6 +92,10 @@ Item {
                     radius: 8
                     color: queueRow.isCurrent ? root.theme.subtleColor
                         : (rowHover.hovered ? root.theme.hoverColor : "transparent")
+
+                    Behavior on color {
+                        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                    }
                 }
 
                 Item {

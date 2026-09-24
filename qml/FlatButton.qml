@@ -28,6 +28,11 @@ Button {
     flat: true
     hoverEnabled: true
 
+    scale: root.enabled && root.down ? 0.94 : 1.0
+    Behavior on scale {
+        NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
+    }
+
     contentItem: Item {
         implicitWidth: root.preferredWidth
         implicitHeight: root.preferredHeight
@@ -39,6 +44,9 @@ Button {
             size: root.iconSize
             color: root.emphasized ? root.theme.accentTextColor : root.labelColor
             opacity: root.enabled ? 1 : 0.35
+            Behavior on color {
+                ColorAnimation { duration: 130; easing.type: Easing.OutCubic }
+            }
         }
 
         Text {
@@ -52,6 +60,9 @@ Button {
             font.pixelSize: root.fontPixelSize > 0 ? root.fontPixelSize : root.theme.bodySize
             font.weight: root.fontWeight
             font.letterSpacing: 0
+            Behavior on color {
+                ColorAnimation { duration: 130; easing.type: Easing.OutCubic }
+            }
         }
     }
 
@@ -67,15 +78,22 @@ Button {
             borderWidth: root.filled ? 1 : 0
             borderColor: root.theme.dividerColor
             color: {
+                const pressedCol = root.theme.pressedColor || root.theme.subtleColor || root.theme.hoverColor
                 if (root.emphasized && root.enabled)
                     return root.down ? root.theme.accentPressedColor : root.theme.accentColor
                 if (root.filled && root.enabled && root.down)
-                    return root.theme.subtleColor
+                    return pressedCol
                 if (root.hovered && root.enabled)
-                    return root.theme.hoverColor
+                    return root.down ? pressedCol : root.theme.hoverColor
+                if (root.enabled && root.down)
+                    return pressedCol
                 if (root.filled)
                     return root.theme.fieldColor
                 return "transparent"
+            }
+
+            Behavior on color {
+                ColorAnimation { duration: 130; easing.type: Easing.OutCubic }
             }
         }
     }

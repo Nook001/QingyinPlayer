@@ -8,7 +8,7 @@ use library_session::{HostEvent, LibrarySession};
 use playback::PlaybackController;
 #[cfg(test)]
 use qingyin_core::SortColumn;
-use qingyin_core::{PlayMode, Settings, SettingsLoad};
+use qingyin_core::{canonical_color_theme, PlayMode, Settings, SettingsLoad};
 #[cfg(test)]
 use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
@@ -107,7 +107,7 @@ pub struct AppBridge {
     base: qt_base_class!(trait QObject),
     library: qt_property!(RefCell<LibrarySession>; CONST),
     playback: qt_property!(RefCell<PlaybackController>; CONST),
-    dark_theme: qt_property!(bool; NOTIFY settings_changed),
+    color_theme: qt_property!(QString; NOTIFY settings_changed),
     music_folders: qt_property!(QString; NOTIFY settings_changed),
     settings_error: qt_property!(QString; NOTIFY settings_changed),
     settings_changed: qt_signal!(),
@@ -126,9 +126,9 @@ pub struct AppBridge {
             env!("CARGO_PKG_VERSION").into()
         }
     ),
-    set_dark_theme: qt_method!(
-        fn set_dark_theme(&mut self, dark: bool) {
-            self.set_dark_theme_internal(dark);
+    set_color_theme: qt_method!(
+        fn set_color_theme(&mut self, theme: QString) {
+            self.set_color_theme_internal(&theme.to_string());
         }
     ),
     restore_session: qt_method!(
@@ -159,12 +159,13 @@ impl AppBridge {
         }
     }
 
-    fn set_dark_theme_internal(&mut self, dark: bool) {
-        if self.dark_theme == dark {
+    fn set_color_theme_internal(&mut self, theme: &str) {
+        let theme = canonical_color_theme(theme);
+        if self.settings.color_theme == theme {
             return;
         }
-        self.dark_theme = dark;
-        self.settings.dark_theme = dark;
+        self.settings.color_theme = theme.to_string();
+        self.color_theme = theme.into();
         self.persist_settings(false);
         self.settings_changed();
     }
@@ -197,7 +198,7 @@ impl AppBridge {
     }
 
     fn apply_settings_to_ui(&mut self) {
-        self.dark_theme = self.settings.dark_theme;
+        self.color_theme = self.settings.color_theme.as_str().into();
         self.playback
             .borrow_mut()
             .apply_saved_volume(self.settings.volume);

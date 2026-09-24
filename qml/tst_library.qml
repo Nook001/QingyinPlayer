@@ -9,7 +9,7 @@ Rectangle {
     height: 720
     color: theme.backgroundColor
 
-    Theme { id: theme; darkTheme: false }
+    Theme { id: theme }
     ListModel {
         id: tracks
         function index_of_track(id) {

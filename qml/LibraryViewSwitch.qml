@@ -86,6 +86,10 @@ Item {
                     radius: height / 2
                     borderWidth: tab.visualFocus ? 1 : 0
                     borderColor: root.theme.accentColor
+
+                    Behavior on color {
+                        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                    }
                 }
 
                 contentItem: Text {

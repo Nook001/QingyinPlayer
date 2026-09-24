@@ -9,7 +9,7 @@ Module {
 
         Property { name: "library"; type: "LibrarySession"; isPointer: true; isReadonly: true }
         Property { name: "playback"; type: "PlaybackController"; isPointer: true; isReadonly: true }
-        Property { name: "dark_theme"; type: "bool"; notify: "settings_changed" }
+        Property { name: "color_theme"; type: "QString"; notify: "settings_changed" }
         Property { name: "music_folders"; type: "QString"; notify: "settings_changed" }
         Property { name: "settings_error"; type: "QString"; notify: "settings_changed" }
 
@@ -18,8 +18,8 @@ Module {
         Method { name: "application_name"; type: "QString" }
         Method { name: "version"; type: "QString" }
         Method {
-            name: "set_dark_theme"
-            Parameter { name: "dark"; type: "bool" }
+            name: "set_color_theme"
+            Parameter { name: "theme"; type: "QString" }
         }
         Method { name: "restore_session" }
         Method { name: "flush_settings" }

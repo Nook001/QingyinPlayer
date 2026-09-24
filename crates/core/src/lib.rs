@@ -171,8 +171,11 @@ pub struct Settings {
     pub version: u32,
     #[serde(default)]
     pub music_directories: Vec<PathBuf>,
-    #[serde(default)]
+    /// Legacy flag. Empty `color_theme` migrates from this value, then it is no longer written.
+    #[serde(default, skip_serializing)]
     pub dark_theme: bool,
+    #[serde(default)]
+    pub color_theme: String,
     #[serde(default = "default_volume")]
     pub volume: f64,
     #[serde(default, deserialize_with = "deserialize_sort_column")]
@@ -189,6 +192,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             music_directories: Vec::new(),
             dark_theme: false,
+            color_theme: "qingci".into(),
             volume: DEFAULT_VOLUME,
             sort_column: SortColumn::Title,
             sort_ascending: true,
@@ -348,6 +352,22 @@ impl Settings {
         };
         self.music_directories
             .retain(|path| !path.as_os_str().is_empty());
+        if self.color_theme.is_empty() {
+            self.color_theme = if self.dark_theme { "songyan" } else { "qingci" }.into();
+        }
+        self.color_theme = canonical_color_theme(&self.color_theme).to_string();
+    }
+}
+
+/// Known color themes. An unknown name falls back to 青瓷.
+#[must_use]
+pub fn canonical_color_theme(name: &str) -> &'static str {
+    match name {
+        "jilan" => "jilan",
+        "songyan" => "songyan",
+        "mushan" => "mushan",
+        "qingci" => "qingci",
+        _ => "qingci",
     }
 }
 
@@ -443,7 +463,7 @@ mod tests {
     fn roundtrips_settings_and_clamps_volume() {
         let path = unique_temp_path("settings.toml");
         let mut settings = Settings {
-            dark_theme: true,
+            color_theme: "mushan".into(),
             volume: 1.8,
             sort_column: SortColumn::Album,
             sort_ascending: false,
@@ -455,13 +475,25 @@ mod tests {
         settings.save_to(&path).unwrap();
 
         let loaded = Settings::load_from(&path).unwrap();
-        assert!(loaded.dark_theme);
+        assert_eq!(loaded.color_theme, "mushan");
         assert!((loaded.volume - 1.0).abs() < f64::EPSILON);
         assert_eq!(loaded.sort_column, SortColumn::Album);
         assert!(!loaded.sort_ascending);
         assert_eq!(loaded.play_mode, PlayMode::Shuffle);
         assert_eq!(loaded.music_directories, vec![PathBuf::from("/music")]);
         assert!(Settings::load_status_from(&path).can_prune_library());
+    }
+
+    #[test]
+    fn legacy_dark_theme_flag_becomes_a_color_theme() {
+        let path = unique_temp_path("legacy-theme.toml");
+        fs::write(&path, "version = 1\ndark_theme = true\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.color_theme, "songyan");
+
+        fs::write(&path, "version = 1\ncolor_theme = \"nope\"\n").unwrap();
+        let unknown = Settings::load_from(&path).unwrap();
+        assert_eq!(unknown.color_theme, "qingci");
     }
 
     #[test]

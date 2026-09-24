@@ -101,7 +101,7 @@ ApplicationWindow {
         enabled: window.visible && !window.capsuleMode
         onActivated: window.toggleFullscreen()
     }
-    property bool darkTheme: backend.dark_theme
+    property string colorTheme: backend.color_theme
     property string libraryQuery: ""
     property var libraryQueries: ["", "", "", ""]
     property real libraryContentY: 0
@@ -112,7 +112,7 @@ ApplicationWindow {
 
     Theme {
         id: appTheme
-        darkTheme: window.darkTheme
+        colorTheme: window.colorTheme
     }
 
     palette.window: appTheme.backgroundColor
@@ -202,6 +202,7 @@ ApplicationWindow {
                 id: pageLoader
                 objectName: "libraryPageLoader"
                 anchors.fill: parent
+                enabled: window.currentView !== 2
                 sourceComponent: window.currentView === 1 ? settingsPage : libraryPage
             }
 
@@ -360,11 +361,11 @@ ApplicationWindow {
         Settings {
             theme: appTheme
             onBackRequested: window.currentView = 0
-            darkMode: backend.dark_theme
+            colorTheme: backend.color_theme
             musicFolders: backend.music_folders
             settingsError: backend.settings_error
-            onThemeRequested: function(dark) {
-                backend.set_dark_theme(dark)
+            onThemeRequested: function(themeId) {
+                backend.set_color_theme(themeId)
             }
         }
     }

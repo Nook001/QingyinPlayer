@@ -282,6 +282,10 @@ Item {
                         borderWidth: trackRow.isSelected && trackList.activeFocus ? 1 : 0
                         borderColor: root.theme.accentColor
                         radius: 5
+
+                        Behavior on color {
+                            ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+                        }
                     }
 
                     contentItem: RowLayout {

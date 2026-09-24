@@ -1,17 +1,16 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
     id: root
 
     required property var theme
-    required property bool darkMode
+    required property string colorTheme
     required property string musicFolders
     property string settingsError
-    signal themeRequested(bool dark)
+    signal themeRequested(string themeId)
     signal backRequested()
 
     Shortcut { sequence: "Escape"; onActivated: root.backRequested() }
@@ -51,59 +50,74 @@ Item {
             font.weight: Font.DemiBold
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
+        Row {
+            spacing: 14
 
-            Button {
-                id: lightThemeButton
+            Repeater {
+                model: root.theme.choices
 
-                Layout.preferredWidth: 88
-                Layout.preferredHeight: 36
-                flat: true
-                hoverEnabled: true
-                text: "浅色"
-                onClicked: root.themeRequested(false)
+                delegate: Item {
+                    id: themeChoice
+                    required property var modelData
+                    width: 88
+                    height: 78
 
-                contentItem: Text {
-                    text: lightThemeButton.text
-                    color: root.theme.textColor
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: root.theme.bodySize
-                }
+                    readonly property bool selected: root.colorTheme === themeChoice.modelData.id
 
-                background: RoundedRect {
-                    radius: 6
-                    color: lightThemeButton.down || lightThemeButton.hovered
-                        ? root.theme.hoverColor
-                        : (!root.darkMode ? root.theme.subtleColor : "transparent")
-                }
-            }
+                    Rectangle {
+                        id: swatch
+                        width: 88
+                        height: 52
+                        radius: 12
+                        antialiasing: true
+                        gradient: Gradient {
+                            orientation: Gradient.Vertical
+                            GradientStop {
+                                position: 0.0
+                                color: root.theme.colorOf(themeChoice.modelData.id, "backgroundTop")
+                            }
+                            GradientStop {
+                                position: 1.0
+                                color: root.theme.colorOf(themeChoice.modelData.id, "backgroundBottom")
+                            }
+                        }
+                        border.width: 2
+                        border.color: themeChoice.selected
+                            ? root.theme.accentColor
+                            : (choiceHover.hovered ? root.theme.textColor : root.theme.dividerColor)
 
-            Button {
-                id: darkThemeButton
+                        Rectangle {
+                            width: 18
+                            height: 18
+                            radius: 9
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 8
+                            color: root.theme.colorOf(themeChoice.modelData.id, "accentColor")
+                        }
+                    }
 
-                Layout.preferredWidth: 88
-                Layout.preferredHeight: 36
-                flat: true
-                hoverEnabled: true
-                text: "深色"
-                onClicked: root.themeRequested(true)
+                    Text {
+                        anchors.top: swatch.bottom
+                        anchors.topMargin: 8
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: themeChoice.modelData.name
+                        color: themeChoice.selected ? root.theme.textColor : root.theme.mutedTextColor
+                        font.pixelSize: root.theme.metaSize
+                        font.weight: themeChoice.selected ? Font.DemiBold : Font.Normal
+                    }
 
-                contentItem: Text {
-                    text: darkThemeButton.text
-                    color: root.theme.textColor
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: root.theme.bodySize
-                }
+                    HoverHandler {
+                        id: choiceHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
 
-                background: RoundedRect {
-                    radius: 6
-                    color: darkThemeButton.down || darkThemeButton.hovered
-                        ? root.theme.hoverColor
-                        : (root.darkMode ? root.theme.subtleColor : "transparent")
+                    TapHandler {
+                        onTapped: root.themeRequested(themeChoice.modelData.id)
+                    }
+
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "主题 " + themeChoice.modelData.name
                 }
             }
         }

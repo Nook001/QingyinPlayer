@@ -9,7 +9,7 @@ Item {
     id: root
     width: 640
     height: 360
-    Theme { id: theme; darkTheme: false }
+    Theme { id: theme }
     QtObject {
         id: player
         property string current_title: "夜曲"

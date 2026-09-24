@@ -8,7 +8,7 @@ Item {
     id: root
     width: 640
     height: 400
-    Theme { id: theme; darkTheme: false }
+    Theme { id: theme }
     QtObject {
         id: windowMock
         property int visibility: Window.Windowed
