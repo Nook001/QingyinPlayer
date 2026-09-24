@@ -14,6 +14,8 @@ Module {
         Property { name: "settings_error"; type: "QString"; notify: "settings_changed" }
 
         Signal { name: "settings_changed" }
+        Signal { name: "tray_show_requested" }
+        Signal { name: "tray_quit_requested" }
 
         Method { name: "application_name"; type: "QString" }
         Method { name: "version"; type: "QString" }
@@ -24,6 +26,8 @@ Module {
         Method { name: "restore_session" }
         Method { name: "flush_settings" }
         Method { name: "shutdown" }
+        Method { name: "start_tray" }
+        Method { name: "refresh_tray" }
     }
 
     Component {

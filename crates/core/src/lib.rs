@@ -184,6 +184,14 @@ pub struct Settings {
     pub sort_ascending: bool,
     #[serde(default, deserialize_with = "deserialize_play_mode")]
     pub play_mode: PlayMode,
+    #[serde(default)]
+    pub playback_track_id: i64,
+    #[serde(default)]
+    pub playback_playlist_id: i64,
+    #[serde(default)]
+    pub playback_position_ms: i64,
+    #[serde(default)]
+    pub playback_queue_ids: Vec<i64>,
 }
 
 impl Default for Settings {
@@ -197,6 +205,10 @@ impl Default for Settings {
             sort_column: SortColumn::Title,
             sort_ascending: true,
             play_mode: PlayMode::Sequential,
+            playback_track_id: 0,
+            playback_playlist_id: 0,
+            playback_position_ms: 0,
+            playback_queue_ids: Vec::new(),
         }
     }
 }

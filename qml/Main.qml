@@ -130,9 +130,47 @@ ApplicationWindow {
         objectName: "appBackend"
     }
 
-    Component.onCompleted: backend.restore_session()
+    Component.onCompleted: {
+        backend.restore_session()
+        backend.start_tray()
+    }
+
+    Connections {
+        target: backend
+        function onTray_show_requested() { window.presentWindow() }
+        function onTray_quit_requested() { window.quitApplication() }
+    }
+
+    property bool quitting: false
+
+    function presentWindow() {
+        if (window.capsuleMode) {
+            window.restoreWindow()
+            return
+        }
+        if (window.visibility === Window.Minimized || !window.visible)
+            window.showNormal()
+        window.raise()
+        window.requestActivate()
+    }
+
+    function quitApplication() {
+        window.quitting = true
+        if (window.visible) {
+            window.close()
+            return
+        }
+        backend.flush_settings()
+        backend.shutdown()
+        Qt.quit()
+    }
 
     onClosing: function(close) {
+        if (!window.quitting) {
+            close.accepted = false
+            window.hide()
+            return
+        }
         backend.flush_settings()
         backend.shutdown()
         close.accepted = true

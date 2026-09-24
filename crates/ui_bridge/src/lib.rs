@@ -1,6 +1,7 @@
 mod collections;
 mod library_session;
 mod playback;
+mod tray;
 
 use collections::TrackListModel;
 use cstr::cstr;
@@ -8,7 +9,7 @@ use library_session::{HostEvent, LibrarySession};
 use playback::PlaybackController;
 #[cfg(test)]
 use qingyin_core::SortColumn;
-use qingyin_core::{canonical_color_theme, PlayMode, Settings, SettingsLoad};
+use qingyin_core::{PlayMode, Settings, SettingsLoad, canonical_color_theme};
 #[cfg(test)]
 use qingyin_library::TrackSnapshot;
 use qingyin_metadata::TrackMetadata;
@@ -113,7 +114,10 @@ pub struct AppBridge {
     settings_changed: qt_signal!(),
     settings: Settings,
     settings_writer: Option<SettingsWriter>,
+    tray: Option<tray::TrayHandle>,
     restored: bool,
+    tray_show_requested: qt_signal!(),
+    tray_quit_requested: qt_signal!(),
     application_name: qt_method!(
         fn application_name(&self) -> QString {
             let _ = self;
@@ -147,9 +151,59 @@ pub struct AppBridge {
             self.shutdown_internal();
         }
     ),
+    start_tray: qt_method!(
+        fn start_tray(&mut self) {
+            self.start_tray_internal();
+        }
+    ),
+    refresh_tray: qt_method!(
+        fn refresh_tray(&mut self) {
+            self.refresh_tray_internal();
+        }
+    ),
 }
 
 impl AppBridge {
+    fn start_tray_internal(&mut self) {
+        if self.tray.is_some() {
+            return;
+        }
+        let bridge = QPointer::from(&*self);
+        match tray::spawn(bridge) {
+            Ok(handle) => {
+                self.tray = Some(handle);
+                self.refresh_tray_internal();
+            }
+            Err(error) => warn!(%error, "failed to start system tray"),
+        }
+    }
+
+    fn refresh_tray_internal(&mut self) {
+        let Some(tray) = &self.tray else {
+            return;
+        };
+        let Ok(playback) = self.playback.try_borrow() else {
+            let bridge = QPointer::from(&*self);
+            let later = qmetaobject::queued_callback(move |()| {
+                let Some(bridge) = bridge.as_pinned() else {
+                    return;
+                };
+                bridge.borrow_mut().refresh_tray_internal();
+            });
+            later(());
+            return;
+        };
+        let playing = playback.playback_state() == "playing";
+        let title = playback.current_title();
+        drop(playback);
+        let tooltip = if title.is_empty() {
+            "清音".to_string()
+        } else {
+            format!("{title} — 清音")
+        };
+        tray.update(playing, tooltip);
+    }
+
     fn shutdown_internal(&mut self) {
         self.library.borrow_mut().shutdown();
         self.playback.borrow_mut().shutdown();
@@ -188,6 +242,12 @@ impl AppBridge {
             _ => self.settings_error = QString::default(),
         }
         self.settings = loaded.into_settings();
+        self.library.borrow_mut().arm_playback_restore(
+            self.settings.playback_track_id,
+            self.settings.playback_playlist_id,
+            self.settings.playback_position_ms,
+            self.settings.playback_queue_ids.clone(),
+        );
         self.apply_settings_to_ui();
         self.library.borrow_mut().restore(
             self.settings.music_directories.clone(),
@@ -212,6 +272,10 @@ impl AppBridge {
     fn capture_settings_from_ui(&mut self) {
         self.settings.volume = self.playback.borrow().volume();
         self.settings.play_mode = self.playback.borrow().play_mode();
+        self.settings.playback_track_id = self.playback.borrow().current_track_id();
+        self.settings.playback_position_ms = self.playback.borrow().position_ms();
+        self.settings.playback_playlist_id = self.library.borrow().playback_playlist_id();
+        self.settings.playback_queue_ids = self.playback.borrow_mut().playback_queue_ids();
         {
             let library = self.library.borrow();
             self.settings.music_directories = library.music_directories().to_vec();
@@ -255,6 +319,16 @@ impl AppBridge {
                 HostEvent::Play { tracks, track_id } => {
                     bridge.playback.borrow_mut().play_track_id(tracks, track_id);
                 }
+                HostEvent::Cue {
+                    tracks,
+                    track_id,
+                    position_ms,
+                } => {
+                    bridge
+                        .playback
+                        .borrow_mut()
+                        .cue_saved(tracks, track_id, position_ms);
+                }
                 HostEvent::TrackRemoved => {
                     bridge.playback.borrow_mut().skip_missing_current_track();
                 }
@@ -289,6 +363,17 @@ impl AppBridge {
         self.playback
             .borrow_mut()
             .set_play_mode_persist(persist_mode);
+
+        let tray_bridge = QPointer::from(&*self);
+        let refresh_tray = qmetaobject::queued_callback(move |()| {
+            let Some(bridge) = tray_bridge.as_pinned() else {
+                return;
+            };
+            bridge.borrow_mut().refresh_tray_internal();
+        });
+        self.playback
+            .borrow_mut()
+            .set_tray_refresh(move || refresh_tray(()));
     }
 }
 

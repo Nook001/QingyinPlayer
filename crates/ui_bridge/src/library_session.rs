@@ -94,6 +94,11 @@ pub enum HostEvent {
         tracks: Vec<TrackSnapshot>,
         track_id: i64,
     },
+    Cue {
+        tracks: Vec<TrackSnapshot>,
+        track_id: i64,
+        position_ms: i64,
+    },
     TrackRemoved,
 }
 
@@ -197,6 +202,12 @@ pub struct LibrarySession {
     selected_directory_cover: qt_property!(QString; NOTIFY collections_changed),
     selected_directory_id: String,
     playing_track_id: i64,
+    playback_playlist_id: i64,
+    saved_playback_track_id: i64,
+    saved_playback_playlist_id: i64,
+    saved_playback_position_ms: i64,
+    saved_playback_queue_ids: Vec<i64>,
+    playback_restore_done: bool,
     collections_changed: qt_signal!(),
     track_count: qt_property!(i32; NOTIFY track_count_changed),
     track_count_changed: qt_signal!(),
@@ -236,7 +247,7 @@ pub struct LibrarySession {
     play_track: qt_method!(
         fn play_track(&mut self, track_id: i64) {
             let tracks = self.library_model.borrow().snapshot();
-            self.play_listed_id(&tracks, track_id);
+            self.play_listed_id(&tracks, track_id, 0);
         }
     ),
     search_tracks: qt_method!(
@@ -294,7 +305,7 @@ pub struct LibrarySession {
     play_artist_track: qt_method!(
         fn play_artist_track(&mut self, track_id: i64) {
             let tracks = self.artist_detail.borrow().snapshot();
-            self.play_listed_id(&tracks, track_id);
+            self.play_listed_id(&tracks, track_id, 0);
         }
     ),
     open_album: qt_method!(
@@ -311,7 +322,7 @@ pub struct LibrarySession {
     play_album_track: qt_method!(
         fn play_album_track(&mut self, track_id: i64) {
             let tracks = self.album_detail.borrow().snapshot();
-            self.play_listed_id(&tracks, track_id);
+            self.play_listed_id(&tracks, track_id, 0);
         }
     ),
     open_directory: qt_method!(
@@ -328,7 +339,7 @@ pub struct LibrarySession {
     play_directory_track: qt_method!(
         fn play_directory_track(&mut self, track_id: i64) {
             let tracks = self.directory_detail.borrow().snapshot();
-            self.play_listed_id(&tracks, track_id);
+            self.play_listed_id(&tracks, track_id, 0);
         }
     ),
     create_playlist: qt_method!(
@@ -375,7 +386,8 @@ pub struct LibrarySession {
     play_playlist_track: qt_method!(
         fn play_playlist_track(&mut self, track_id: i64) {
             let tracks = self.playlist_model.borrow().snapshot();
-            self.play_listed_id(&tracks, track_id);
+            let playlist_id = self.selected_playlist_id;
+            self.play_listed_id(&tracks, track_id, playlist_id);
         }
     ),
     set_playlist_sort: qt_method!(
@@ -613,6 +625,7 @@ impl LibrarySession {
         self.scan_status_changed();
         self.queue_missing_covers();
         self.reload_playlists();
+        self.restore_saved_playback();
     }
 
     fn apply_search_snapshot(&mut self, result: Result<SearchSnapshot, LibraryIoError>) {
@@ -927,7 +940,26 @@ impl LibrarySession {
         self.scan_status_changed();
     }
 
-    fn play_listed_id(&mut self, tracks: &[TrackSnapshot], track_id: i64) {
+    pub fn playback_playlist_id(&self) -> i64 {
+        self.playback_playlist_id
+    }
+
+    pub fn arm_playback_restore(
+        &mut self,
+        track_id: i64,
+        playlist_id: i64,
+        position_ms: i64,
+        queue_ids: Vec<i64>,
+    ) {
+        self.saved_playback_track_id = track_id;
+        self.saved_playback_playlist_id = playlist_id;
+        self.saved_playback_position_ms = position_ms.max(0);
+        self.saved_playback_queue_ids = queue_ids;
+        self.playback_restore_done = false;
+    }
+
+    fn play_listed_id(&mut self, tracks: &[TrackSnapshot], track_id: i64, playlist_id: i64) {
+        self.playback_playlist_id = playlist_id;
         self.playing_track_id = track_id;
         if let Some(scheduler) = &self.cover_scheduler
             && let Some(track) = tracks.iter().find(|track| track.id() == track_id)
@@ -947,6 +979,72 @@ impl LibrarySession {
             tracks: tracks.to_vec(),
             track_id,
         });
+    }
+
+    fn restore_saved_playback(&mut self) {
+        if self.playback_restore_done {
+            return;
+        }
+        self.playback_restore_done = true;
+        let track_id = self.saved_playback_track_id;
+        if track_id <= 0 {
+            return;
+        }
+        let playlist_id = self.saved_playback_playlist_id;
+        let position_ms = self.saved_playback_position_ms;
+        let saved_queue = self.snapshots_in_order(&self.saved_playback_queue_ids);
+        let playlist_ids = if playlist_id > 0 {
+            self.with_playlist_database(|database| database.playlist_track_ids(playlist_id))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let tracks = if saved_queue.iter().any(|track| track.id() == track_id) {
+            if playlist_ids.contains(&track_id) {
+                self.open_playlist_internal(playlist_id);
+                self.playback_playlist_id = playlist_id;
+            } else {
+                self.playback_playlist_id = 0;
+            }
+            saved_queue
+        } else if playlist_ids.contains(&track_id) {
+            self.open_playlist_internal(playlist_id);
+            self.playback_playlist_id = playlist_id;
+            self.snapshots_for_ids(&playlist_ids)
+        } else if let Some(track) = self.catalog.borrow().get(&track_id).cloned() {
+            self.playback_playlist_id = 0;
+            vec![track]
+        } else {
+            return;
+        };
+        if !tracks.iter().any(|track| track.id() == track_id) {
+            return;
+        }
+        self.emit_host(HostEvent::Cue {
+            tracks,
+            track_id,
+            position_ms,
+        });
+    }
+
+    fn snapshots_in_order(&self, ids: &[i64]) -> Vec<TrackSnapshot> {
+        let catalog = self.catalog.borrow();
+        ids.iter()
+            .filter_map(|id| catalog.get(id).cloned())
+            .collect()
+    }
+
+    fn snapshots_for_ids(&self, ids: &[i64]) -> Vec<TrackSnapshot> {
+        let catalog = self.catalog.borrow();
+        let mut ids = ids
+            .iter()
+            .copied()
+            .filter(|id| catalog.contains_key(id))
+            .collect::<Vec<_>>();
+        sort_ids_with(&mut ids, &catalog, SortColumn::Title, true);
+        ids.iter()
+            .filter_map(|id| catalog.get(id).cloned())
+            .collect()
     }
 
     fn add_music_directory(&mut self, path: PathBuf) -> bool {
@@ -1024,8 +1122,8 @@ impl LibrarySession {
             return 0;
         };
         if track_id > 0 {
-            let _ = self
-                .with_playlist_database(|database| database.add_playlist_track(id, track_id));
+            let _ =
+                self.with_playlist_database(|database| database.add_playlist_track(id, track_id));
         }
         self.reload_playlists();
         id
@@ -1674,6 +1772,39 @@ mod tests {
         mailbox.send(1);
         mailbox.send(2);
         assert_eq!(mailbox.recv_timeout(Duration::from_millis(10)), Some(2));
+    }
+
+    #[test]
+    fn saved_playlist_queue_is_title_order_and_library_play_clears_it() {
+        let mut session = LibrarySession::default();
+        let tracks = [("Beta", 2), ("Alpha", 1)]
+            .into_iter()
+            .map(|(title, id)| {
+                let mut metadata = TrackMetadata::from_display(
+                    PathBuf::from(format!("/music/{title}.flac")),
+                    title,
+                    None,
+                    Vec::new(),
+                    None,
+                );
+                metadata.id = id;
+                TrackSnapshot::from_metadata(metadata)
+            })
+            .collect::<Vec<_>>();
+        session.install_catalog(tracks);
+        let ordered = session.snapshots_for_ids(&[2, 1]);
+        assert_eq!(
+            ordered.iter().map(TrackSnapshot::id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let kept = session.snapshots_in_order(&[2, 1, 9]);
+        assert_eq!(
+            kept.iter().map(TrackSnapshot::id).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        session.playback_playlist_id = 9;
+        session.play_track(1);
+        assert_eq!(session.playback_playlist_id, 0);
     }
 
     #[test]

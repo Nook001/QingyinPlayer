@@ -596,6 +596,7 @@ pub struct PlaybackController {
     current_queue_index: qt_property!(i32; NOTIFY playback_changed),
     persist_volume: Option<Arc<dyn Fn(f64) + Send + Sync>>,
     persist_play_mode: Option<Arc<dyn Fn(PlayMode) + Send + Sync>>,
+    tray_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
     playback_state: qt_property!(QString; NOTIFY playback_changed),
     current_track_id: qt_property!(i64; NOTIFY playback_changed),
     current_title: qt_property!(QString; NOTIFY playback_changed),
@@ -612,6 +613,7 @@ pub struct PlaybackController {
     capsule_active: bool,
     lyrics_worker_running: bool,
     lyrics_generation: Option<LoadGeneration>,
+    resume_position_ms: i64,
     set_lyrics_visible: qt_method!(
         fn set_lyrics_visible(&mut self, visible: bool) {
             self.lyrics_visible = visible;
@@ -645,9 +647,7 @@ pub struct PlaybackController {
     ),
     play_previous: qt_method!(
         fn play_previous(&mut self) {
-            if let Some(index) = self.engine.previous_index() {
-                self.play_queue_index(index);
-            }
+            self.play_previous_internal();
         }
     ),
     play_next: qt_method!(
@@ -708,6 +708,10 @@ impl PlaybackController {
         self.persist_play_mode = Some(Arc::new(persist));
     }
 
+    pub fn set_tray_refresh(&mut self, refresh: impl Fn() + Send + Sync + 'static) {
+        self.tray_refresh = Some(Arc::new(refresh));
+    }
+
     #[must_use]
     pub fn volume(&self) -> f64 {
         self.engine.volume
@@ -716,6 +720,70 @@ impl PlaybackController {
     #[must_use]
     pub fn play_mode(&self) -> PlayMode {
         self.engine.mode
+    }
+
+    #[must_use]
+    pub const fn current_track_id(&self) -> i64 {
+        self.current_track_id
+    }
+
+    #[must_use]
+    pub fn playback_state(&self) -> String {
+        self.playback_state.to_string()
+    }
+
+    #[must_use]
+    pub fn current_title(&self) -> String {
+        self.current_title.to_string()
+    }
+
+    #[must_use]
+    pub const fn position_ms(&self) -> i64 {
+        self.engine.position_ms
+    }
+
+    #[must_use]
+    pub fn playback_queue_ids(&mut self) -> Vec<i64> {
+        self.engine
+            .playback_order()
+            .into_iter()
+            .filter_map(|index| self.engine.queue.get(index).map(|track| track.id()))
+            .collect()
+    }
+
+    pub fn cue_saved(&mut self, tracks: Vec<TrackSnapshot>, track_id: i64, position_ms: i64) {
+        self.engine.queue = tracks;
+        let Some(index) = self
+            .engine
+            .queue
+            .iter()
+            .position(|track| track.id() == track_id)
+        else {
+            self.sync_queue_model();
+            return;
+        };
+        self.engine.prepare_queue(index);
+        self.engine.current = Some(index);
+        self.engine.sync_shuffle_index(index);
+        self.engine.requested = PlaybackState::Paused;
+        self.engine.position_ms = position_ms.max(0);
+        self.engine.publish_current();
+        self.resume_position_ms = position_ms.max(0);
+        self.sync_queue_model();
+        self.publish_identity();
+        self.publish_track_details();
+        self.publish_position();
+        self.ensure_player();
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
+        let path = self.engine.queue[index].metadata.path.clone();
+        let load_id = player.load(&path);
+        self.engine.generation = player.generation();
+        self.engine.load_failed = false;
+        self.engine.note_pending(load_id, CommandKind::Load);
+        let pause_id = player.pause();
+        self.engine.note_pending(pause_id, CommandKind::Pause);
     }
 
     pub fn apply_saved_volume(&mut self, volume: f64) {
@@ -915,7 +983,7 @@ impl PlaybackController {
         self.lyrics_changed();
     }
 
-    fn toggle_playback_internal(&mut self) {
+    pub(crate) fn toggle_playback_internal(&mut self) {
         self.ensure_player();
         let Some(player) = self.player.as_mut() else {
             return;
@@ -947,7 +1015,13 @@ impl PlaybackController {
         self.publish_identity();
     }
 
-    fn play_next_internal(&mut self) {
+    pub(crate) fn play_previous_internal(&mut self) {
+        if let Some(index) = self.engine.previous_index() {
+            self.play_queue_index(index);
+        }
+    }
+
+    pub(crate) fn play_next_internal(&mut self) {
         match self.engine.next_index() {
             Some(index) => self.play_queue_index(index),
             None => self.stop_playback_silently(),
@@ -976,7 +1050,11 @@ impl PlaybackController {
         let Some(player) = self.player.as_mut() else {
             return;
         };
-        let maximum = self.engine.duration_ms.max(0);
+        let maximum = if self.engine.duration_ms > 0 {
+            self.engine.duration_ms
+        } else {
+            position
+        };
         let position = position.clamp(0, maximum);
         let Ok(position_millis) = u64::try_from(position) else {
             return;
@@ -1028,9 +1106,19 @@ impl PlaybackController {
             }
         }
         self.apply_notify(notify);
+        self.maybe_seek_resume();
         if eos {
             self.play_eos_internal();
         }
+    }
+
+    fn maybe_seek_resume(&mut self) {
+        if self.resume_position_ms <= 0 || self.engine.confirmed != PlaybackState::Paused {
+            return;
+        }
+        let position = self.resume_position_ms;
+        self.resume_position_ms = 0;
+        self.seek_to_internal(position);
     }
 
     fn apply_notify(&mut self, notify: NotifySet) {
@@ -1070,6 +1158,9 @@ impl PlaybackController {
             PlaybackState::Stopped => "stopped".into(),
         };
         self.playback_changed();
+        if let Some(refresh) = &self.tray_refresh {
+            refresh();
+        }
     }
 
     fn publish_position(&mut self) {
