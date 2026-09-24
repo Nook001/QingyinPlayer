@@ -261,17 +261,35 @@ Item {
                     id: lineDelegate
                     required property var modelData
                     required property int index
+                    readonly property int distanceFromActive: !root.synced || root.activeLine < 0
+                        ? 2 : Math.abs(lineDelegate.index - root.activeLine)
+                    readonly property real lineCenter: y + height / 2 - lyricsList.contentY
+                    readonly property real edgeFade: {
+                        const span = Math.max(1, lyricsList.height)
+                        const edge = span * 0.22
+                        if (lineDelegate.lineCenter < edge)
+                            return Math.max(0.2, lineDelegate.lineCenter / edge)
+                        if (lineDelegate.lineCenter > span - edge)
+                            return Math.max(0.2, (span - lineDelegate.lineCenter) / edge)
+                        return 1
+                    }
+                    readonly property real depthOpacity: {
+                        if (!root.synced)
+                            return 0.92
+                        if (lineDelegate.distanceFromActive === 0)
+                            return 1
+                        if (lineDelegate.distanceFromActive === 1)
+                            return 0.55
+                        return 0.28
+                    }
                     width: lyricsList.width - 14
-                    padding: 12
+                    padding: 8
                     hoverEnabled: root.synced
                     transformOrigin: Item.Center
-                    scale: lineDelegate.index === root.activeLine ? 1.04 : 1
-                    opacity: lineDelegate.index === root.activeLine ? 1 : 0.72
+                    scale: lineDelegate.distanceFromActive === 0 ? 1.02 : 1
+                    opacity: lineDelegate.depthOpacity * lineDelegate.edgeFade
                     Accessible.name: modelData.text
                     Behavior on scale {
-                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-                    }
-                    Behavior on opacity {
                         NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
                     }
                     onClicked: {
@@ -281,15 +299,35 @@ Item {
                             Qt.callLater(() => { if (root.pageAlive) root.followCurrent() })
                         }
                     }
-                    contentItem: Text {
-                        text: lineDelegate.modelData.text || "♪"
-                        wrapMode: Text.Wrap
-                        color: lineDelegate.index === root.activeLine
-                            ? root.theme.accentColor : root.theme.mutedTextColor
-                        font.pixelSize: root.theme.titleSize
-                        font.weight: lineDelegate.index === root.activeLine ? Font.DemiBold : Font.Normal
-                        Behavior on color {
-                            ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    contentItem: Item {
+                        implicitWidth: lyricText.implicitWidth
+                        implicitHeight: lyricText.implicitHeight
+
+                        Text {
+                            anchors.fill: lyricText
+                            visible: lineDelegate.distanceFromActive === 0
+                            text: lyricText.text
+                            wrapMode: Text.Wrap
+                            color: root.theme.accentColor
+                            opacity: 0.2
+                            font.pixelSize: lyricText.font.pixelSize
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            id: lyricText
+                            width: lineDelegate.width - lineDelegate.padding * 2
+                            text: lineDelegate.modelData.text || "♪"
+                            wrapMode: Text.Wrap
+                            color: lineDelegate.distanceFromActive === 0
+                                ? root.theme.accentColor : root.theme.textColor
+                            font.pixelSize: !root.synced ? root.theme.bodySize
+                                : (lineDelegate.distanceFromActive === 0 ? 22
+                                    : (lineDelegate.distanceFromActive === 1 ? 16 : 14))
+                            font.weight: lineDelegate.distanceFromActive === 0 ? Font.DemiBold : Font.Normal
+                            Behavior on color {
+                                ColorAnimation { duration: 180; easing.type: Easing.OutCubic }
+                            }
                         }
                     }
                     background: RoundedRect {

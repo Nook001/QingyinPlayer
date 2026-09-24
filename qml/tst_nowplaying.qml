@@ -22,6 +22,7 @@ Item {
         property bool lyrics_loading: false
         property string lyrics_error: ""
         property int playback_position: 0
+        property string playback_state: "playing"
         property int requestedSeek: -1
         property bool lyricsVisible: false
         function seek_to(position) { requestedSeek = position; playback_position = position }

@@ -6,9 +6,10 @@ import QtQuick.Layouts
 
 Item {
     id: root
-    implicitHeight: summaryButton.implicitHeight
+    implicitHeight: 30
     required property var theme
     required property var audio
+    readonly property bool hiRes: audio.bitDepth >= 24 || audio.sampleRate >= 88200
     readonly property string summary: {
         const parts = []
         if (audio.format) parts.push(audio.format)
@@ -30,19 +31,32 @@ Item {
     Button {
         id: summaryButton
         objectName: "audioDetailsButton"
-        width: parent.width
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width, summaryLabel.implicitWidth + 28)
+        height: 30
         text: root.summary || "源文件信息"
         flat: true
-        padding: 8
+        padding: 0
+        hoverEnabled: true
         Accessible.name: "查看源文件音频信息"
-        contentItem: Text {
-            text: summaryButton.text
-            color: root.theme.mutedTextColor
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: root.theme.metaSize
-        }
         onClicked: details.open()
+
+        background: Rectangle {
+            radius: height / 2
+            color: summaryButton.hovered ? root.theme.hoverColor : "transparent"
+            border.width: 1
+            border.color: root.hiRes ? root.theme.accentColor : root.theme.dividerColor
+        }
+
+        contentItem: Text {
+            id: summaryLabel
+            text: summaryButton.text
+            color: root.hiRes ? root.theme.accentColor : root.theme.mutedTextColor
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font.pixelSize: root.theme.metaSize
+            font.weight: root.hiRes ? Font.Medium : Font.Normal
+        }
     }
 
     Popup {
