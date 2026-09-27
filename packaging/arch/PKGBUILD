@@ -28,7 +28,7 @@ makedepends=(
   'cargo'
   'pkgconf'
 )
-options=('!lto')
+options=('!lto' '!debug')
 source=(
   "$pkgname-$pkgver.tar.gz::https://github.com/Nook001/QingyinPlayer/archive/refs/tags/v$pkgver.tar.gz"
   "$_app_id.desktop"
@@ -36,7 +36,7 @@ source=(
   "$_app_id.svg"
 )
 sha256sums=(
-  '9f7453978d3066719843f46b7e3a6d222815b1d7c86ea958292fb554e1fe5ae6'
+  '835016b794412f503a4692eed6b6b7dcd0e794de64583daec51cd6e83cbe168b'
   'c7664e253aa198a1c7f9984ee5a67bc3ef5f1ce2c061700e55a97a117e18585b'
   '8a6d7a7d7d5d40b66667b5bdf291d7c17fc9d8837b748b6147f81d97e36dee01'
   '153aeb4aa6743914daecfd84ab9d33dc4bedcf5c7196d002ff289cc5bd66d8fe'

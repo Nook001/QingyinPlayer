@@ -47,6 +47,6 @@ fi
 pkgdest="$(mktemp -d /tmp/qingyin-pkgdest.XXXXXX)"
 chown builder:builder "$pkgdest"
 su builder -s /bin/bash -c "cd '$work/packaging/arch' && PKGDEST='$pkgdest' makepkg -s --noconfirm --needed"
-cp -a "$pkgdest"/*.pkg.tar.zst "$work/packaging/arch/"
+cp -a "$pkgdest"/qingyin-[0-9]*.pkg.tar.zst "$work/packaging/arch/"
 chmod -R a+rX "$work/packaging/arch"
 ls -l "$work"/packaging/arch/*.pkg.tar.zst

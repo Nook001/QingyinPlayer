@@ -71,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: arch-package
-          path: packaging/arch/*.pkg.tar.zst
+          path: packaging/arch/qingyin-[0-9]*.pkg.tar.zst
           if-no-files-found: error
 
   github-release:
@@ -80,6 +80,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           name: arch-package
