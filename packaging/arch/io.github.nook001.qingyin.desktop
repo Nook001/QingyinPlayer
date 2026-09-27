@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=清音
+Name[en]=Qingyin
+GenericName=Music Player
+GenericName[zh_CN]=音乐播放器
+Comment=Chinese-first local music player
+Comment[zh_CN]=中文优先的本地音乐播放器
+Exec=qingyin
+Icon=io.github.nook001.qingyin
+Terminal=false
+Categories=AudioVideo;Player;Audio;
+StartupNotify=true
+StartupWMClass=io.github.nook001.qingyin

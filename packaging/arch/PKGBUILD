@@ -1,0 +1,79 @@
+# Maintainer: nook001 <1934285489lyz@gmail.com>
+#
+# Source of truth for the version is Cargo.toml workspace.package.version.
+# pkgver must match that version and the v${pkgver} git tag.
+# Desktop, icon and metainfo live next to this file and are also installed
+# by packaging/install.sh. QML stays inside the qingyin binary.
+
+_app_id=io.github.nook001.qingyin
+pkgname=qingyin
+pkgver=0.1.1
+pkgrel=1
+pkgdesc='Chinese-first local music player'
+arch=('x86_64')
+url='https://github.com/Nook001/QingyinPlayer'
+license=('LicenseRef-AllRightsReserved')
+depends=(
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-wayland'
+  'gstreamer'
+  'gst-plugins-base'
+  'gst-plugins-good'
+  'gst-plugin-pipewire'
+  'dbus'
+  'hicolor-icon-theme'
+)
+makedepends=(
+  'cargo'
+  'pkgconf'
+)
+options=('!lto')
+source=(
+  "$pkgname-$pkgver.tar.gz::https://github.com/Nook001/QingyinPlayer/archive/refs/tags/v$pkgver.tar.gz"
+  "$_app_id.desktop"
+  "$_app_id.metainfo.xml"
+  "$_app_id.svg"
+)
+sha256sums=(
+  '9f7453978d3066719843f46b7e3a6d222815b1d7c86ea958292fb554e1fe5ae6'
+  'c7664e253aa198a1c7f9984ee5a67bc3ef5f1ce2c061700e55a97a117e18585b'
+  '8a6d7a7d7d5d40b66667b5bdf291d7c17fc9d8837b748b6147f81d97e36dee01'
+  '153aeb4aa6743914daecfd84ab9d33dc4bedcf5c7196d002ff289cc5bd66d8fe'
+)
+
+prepare() {
+  cd "QingyinPlayer-$pkgver"
+  export CARGO_HOME="$srcdir/cargo-home"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "QingyinPlayer-$pkgver"
+  export CARGO_HOME="$srcdir/cargo-home"
+  # Match the workspace release profile. The published 0.1.0 tag predates that profile.
+  export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+  export CARGO_PROFILE_RELEASE_LTO=thin
+  export CARGO_PROFILE_RELEASE_STRIP=symbols
+  export RUSTFLAGS="--remap-path-prefix=$srcdir=/usr/src/qingyin"
+  cargo build --release --locked --frozen -p qingyin-ui-bridge --bin qingyin
+}
+
+check() {
+  cd "QingyinPlayer-$pkgver"
+  export CARGO_HOME="$srcdir/cargo-home"
+  export QT_QPA_PLATFORM=offscreen
+  export QT_QUICK_CONTROLS_STYLE=Basic
+  cargo test --locked --frozen --workspace
+}
+
+package() {
+  cd "QingyinPlayer-$pkgver"
+  install -Dm755 target/release/qingyin "$pkgdir/usr/bin/qingyin"
+  install -Dm644 "$srcdir/$_app_id.desktop" \
+    "$pkgdir/usr/share/applications/$_app_id.desktop"
+  install -Dm644 "$srcdir/$_app_id.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_app_id.svg"
+  install -Dm644 "$srcdir/$_app_id.metainfo.xml" \
+    "$pkgdir/usr/share/metainfo/$_app_id.metainfo.xml"
+}

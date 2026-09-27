@@ -49,7 +49,9 @@ QT_QPA_PLATFORM=offscreen qingyin --smoke
 PREFIX=/usr/local bash packaging/install.sh uninstall
 ```
 
-干净测试前缀：`bash scripts/check-install.sh`。QML 不单独安装；运行时需要 Qt 6 Quick Controls / Layouts / Dialogs / Window，以及 GStreamer `base`/`good` 与 PipeWire 插件。
+发布构建是 `cargo build --release --locked -p qingyin-ui-bridge --bin qingyin`。安装前缀由 `PREFIX` 决定，打包根目录由 `DESTDIR` 决定。QML 不单独安装。运行时需要 Qt 6 Quick Controls / Layouts / Dialogs / Window / Effects，以及 GStreamer `base`/`good` 与 PipeWire 插件。
+
+Arch 包和发版步骤见 [docs/release.md](docs/release.md)。干净测试前缀：`bash scripts/check-install.sh`。
 
 ## 仓库结构
 

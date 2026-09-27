@@ -1,7 +1,15 @@
+use cpp::cpp;
 use qmetaobject::prelude::*;
 use qmetaobject::{CompilationMode, ComponentStatus, QString, QUrl, QmlComponent, qrc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+/// Desktop file stem. Keep this equal to packaging/arch/io.github.nook001.qingyin.desktop.
+const DESKTOP_FILE_NAME: &std::ffi::CStr = c"io.github.nook001.qingyin";
+
+cpp! {{
+    #include <QtGui/QGuiApplication>
+}}
 
 qrc!(embedded_qml,
     "../../qml" as "qml" {
@@ -55,6 +63,7 @@ fn main() {
     qingyin_ui_bridge::register_qml_types();
 
     let mut engine = QmlEngine::new();
+    publish_desktop_file_name();
     engine.add_import_path("qrc:/qml".into());
     if !qml_root_ready(&engine, "qrc:/qml/Main.qml") {
         eprintln!("failed to load QML root from qrc:/qml/Main.qml");
@@ -67,6 +76,13 @@ fn main() {
     }
     info!("QML loaded, entering event loop");
     engine.exec();
+}
+
+fn publish_desktop_file_name() {
+    let name = DESKTOP_FILE_NAME.as_ptr();
+    cpp!(unsafe [name as "const char *"] {
+        QGuiApplication::setDesktopFileName(QString::fromUtf8(name));
+    });
 }
 
 fn qml_root_ready(engine: &QmlEngine, url: &str) -> bool {

@@ -1260,7 +1260,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "qingyin-chinese"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "icu_collator",
  "pinyin",
@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "qingyin-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "thiserror",
@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "qingyin-library"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "notify",
@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "qingyin-metadata"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lofty",
  "serde",
@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "qingyin-player"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gstreamer",
  "thiserror",
@@ -1315,7 +1315,7 @@ dependencies = [
 
 [[package]]
 name = "qingyin-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "qingyin-chinese",
  "qingyin-metadata",
@@ -1325,8 +1325,10 @@ dependencies = [
 
 [[package]]
 name = "qingyin-ui-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
+ "cpp",
+ "cpp_build",
  "cstr",
  "ksni",
  "qingyin-core",
